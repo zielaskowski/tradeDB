@@ -1,7 +1,7 @@
 from typing import Dict, Union
 import os
 import re
-import sqlite3
+import sqlalchemy as db
 import pandas as pd
 import hashlib
 from workers.common import read_json
@@ -135,28 +135,23 @@ def execute_sql(script: list, db_file: str) -> Dict:
         Dict: dict of response from sql
             {command: response in form of pd.DataFrame}
     """
+    engine = db.create_engine('sqlite:///'+db_file)
     ans = {}
     try:
-        con = sqlite3.connect(
-            db_file, detect_types=sqlite3.PARSE_COLNAMES | sqlite3.PARSE_DECLTYPES
-        )
-        cur = con.cursor()
+        con = engine.connect()
+        #db_file, detect_types=db.PARSE_COLNAMES | db.PARSE_DECLTYPES
+        #cur = con.cursor()
         for cmd in script:
-            cur.execute(cmd)
-            a = cur.fetchall()
+            resp=con.execute(db.text(cmd))
+            a = resp.fetchall()
             if a:
-                colnames = [c[0] for c in cur.description]
+                colnames = resp.keys()
                 ans[cmd] = pd.DataFrame(a, columns=colnames)
         return ans
-    except sqlite3.Error as err:
+    except:
         print("SQL operation failed:")
-        print(err)
         return False
-    except sqlite3.Warning as war:
-        print("DB integrity error:")
-        print(war)
     finally:
-        cur.close()
         con.close()
 
 
