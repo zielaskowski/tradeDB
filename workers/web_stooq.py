@@ -38,6 +38,7 @@ def web_stooq(
     else:
         # or we search particular item
         url = "https://stooq.com/q/?s=opus.hu"
+        return data
 
 
 def read_sector_url(id: int) -> pd.DataFrame:
@@ -97,5 +98,5 @@ def split_groups(data: pd.DataFrame, grp: str) -> pd.DataFrame:
     grpName["End"] = end[1:]
     grpRow = grpName.loc[:, "Name"] == grp
     data = data.loc[
-        grpName["Start"].values[grpRow][0] : grpName["End"].values[grpRow][0], :
+        grpName["Start"].values[grpRow][0]: grpName["End"].values[grpRow][0], :
     ]
