@@ -1,0 +1,105 @@
+{
+    "GEO":
+    //**https://wbdata.readthedocs.io/en/stable/
+    {
+        "symbol": "TEXT PRIMARY KEY",
+        "country": "TEXT UNIQUE",
+        "continent": "TEXT UNIQUE",
+        "currency": "TEXT",
+        "GDP": "INTEGER",
+        "stooq_vol": "INTEGER",
+        "last_upd": "TIMESTAMP"
+    },
+
+    "INDEXES_DESC": { //**INDEX is reserved keyword
+        "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'INDEXES'
+        "symbol": "TEXT",
+        "name": "TEXT",
+        "components": "TEXT",
+        "country": "TEXT",
+        "industry": "TEXT",
+        "sector": "TEXT",
+        "info": "TEXT",
+        "from_date": "TIMESTAMP",
+        "to_date": "TIMESTAMP",
+        "FOREIGN": { "country": "GEO(symbol)" }
+    },
+
+    "INDEXES": {
+        "HASH": "TEXT",
+        "symbol": "TEXT",
+        "name": "TEXT",
+        "vol": "INTEGER",
+        "val": "INTEGER",
+        "date": "TIMESTAMP",
+        "FOREIGN": { "HASH": "INDEXES_DESC(HASH)" }
+    },
+    "ETF_DESC": {
+        "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
+        "symbol": "TEXT",
+        "name": "TEXT",
+        "components": "TEXT",
+        "country": "TEXT",
+        "industry": "TEXT",
+        "sector": "TEXT",
+        "info": "TEXT",
+        "from_date": "TIMESTAMP",
+        "to_date": "TIMESTAMP",
+        "FOREIGN": { "country": "GEO(symbol)" }
+    },
+    "ETF": {
+        "HASH": "TEXT",
+        "symbol": "TEXT",
+        "name": "TEXT",
+        "vol": "INTEGER",
+        "val": "INTEGER",
+        "date": "TIMESTAMP",
+        "FOREIGN": { "HASH": "ETF_DESC(HASH)" }
+    },
+    "COMODITIES_DESC": {
+        "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
+        "symbol": "TEXT",
+        "name": "TEXT",
+        "sector": "TEXT",
+        "info": "TEXT",
+        "from_date": "TIMESTAMP",
+        "to_date": "TIMESTAMP"
+    },
+    "COMODITIES": {
+        "HASH": "TEXT",
+        "symbol": "TEXT",
+        "vol": "INTEGER",
+        "val": "INTEGER",
+        "date": "TIMESTAMP",
+        "FOREIGN": { "HASH": "COMODITIES_DESC(HASH)" }
+    },
+
+    "STOCK": {
+        "hash": "TEXT",
+        "symbol": "TEXT",
+        "vol": "INTEGER",
+        "val": "INTEGER",
+        "date": "TIMESTAMP",
+        "FOREIGN": { "HASH": "STOCK_DESC(HASH)" }
+    },
+
+    "STOCK_DESC": {
+        "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'STOCK'
+        "symbol": "TEXT",
+        "name": "TEXT",
+        "country": "TEXT",
+        "industry": "TEXT",
+        "sector": "TEXT",
+        "info": "TEXT",
+        "from_date": "TIMESTAMP",
+        "to_date": "TIMESTAMP",
+        "FOREIGN": { "country": "GEO(symbol)" }
+    },
+//** all prices in SQL are written in USD, so we need relation to USD only
+    "CURRENCY": { 
+        "symbol": "TEXT",
+        "toUSD": "INTEGER",
+        "date": "TIMESTAMP",
+        "FOREIGN":{"symbol":"GEO(currency)"}
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "asia": [524, ""],
+    "europe": [525, ""],
+    "america": [526, ""],
+    "middle-east": [510, "Middle East"],
+    "others": [510, "Others"],
+    "S&P_Main": [549, "Main"],
+    "S&P_Sector": [549, "Sector"],
+    "S&P_volatility": [549, "Volatility"],
+    "S&P_Commodity": [549, "Commodity"],
+    "S&P_Other": [549, "Other"]
+}

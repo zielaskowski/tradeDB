@@ -1,0 +1,90 @@
+sql_stooq
+_____________
+
+web_stooq
+_____________
+
+web_info
+_____________
+:currency
+:country
+:industry
+
+
+mr_stooq
+_____________
+- check if db exists and if date in db: sql_stooq
+- get from web and write to db: web_stooq
+:from =[INDEX, STOCKS,...]
+:market = [asia,europe,wig30,...]
+:name = [GE,PKO,S&P,....]
+:[start] = date
+:[end] = date
+
+
+cli_stooq
+_____________
+
+examples:
+cli_stooq -type INDEX -country PL -out symbol:name:vol3m:desc:continent:stooq_vol [-curr PLN -db stooq.sqlite -force_upd]
+cli_stooq -from INDEX -symbol wig20 -out components [-curr PLN -db srooq.sqlite -force_upd] > 
+        cli_stooq -from STOCK -symbol % -out industry:desc
+
+cli_stooq -from INDEX -symbol +wig20 -out components  >                          //'+' before symbol means to include the symbol in chain
+        cli_stooq -add -from STOCK -symbol % -industry transport -out symbol >   //'%' means the output of previous
+        cli_stooq -add -from ETF -industry transport -out symbol >               //'-add' means to add output to chain
+cli_stooq -from GEO -continent Europe -PKB 5max -out country >
+        cli_stooq -add -from INDEX -country % -vol3m 7max -out symbol >          //chain shall be always uniqe (remove duplicates)
+        cli_stooq -from QUOTES -dates 2019-01-01:2021-10-15 -symbol % -out close //dates always returned from QUOTES
+
+
+
+
+
+relations
+_____________
+1. spólki wig20
+2. zależności?:
+- polskie indeksy
+- obligacje
+- waluta pln/usd pln/eur
+- indeksy USA i europejskie
+- miesiąc, dzień miesiąca
+- wskaźniki ETF kraju,
+- wskażniki branżowe
+- wskaźniki techniczne
+-.....
+- ceny towarów dla spółek przemysłowych
+- opcje
+
+SQL:
+see ./assets/sql.json
+GEO
+#https://wbdata.readthedocs.io/en/stable/
+|symbol|country|continent|currency|GDP|stooq_vol|last_upd
+
+INDEX_DESC
+|HASH|symbol|name|components|country|industry|desc|from_date|to_date
+
+INDEXES
+|symbol|name|vol3m|val|date
+
+ETF
+|symbol|name|vol3m|country|industry|desc|last_upd
+
+COMODITIES
+|symbol|name|industry|desc|last_upd
+
+STOCK
+|hash|symbol|vol3m|val|curr|date
+
+STOCK_DESC
+|hash|symbol|name|country|industry|desc|from_date|to_date
+
+CURRENCY
+|symbol|country_from|country_to|date
+
+QUOTES
+|symbol|date|open|close|high|low|vol|currency
+
+

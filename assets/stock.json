@@ -1,0 +1,28 @@
+{ //**https://stooq.com/t/?i=523
+    "U.S. Stocks": [518, ""],
+    "NYSE Stocks": [515, ""],
+    "NASDAQ Stocks": [],
+    "NYSE MKT Stocks": [],
+    "DJI Stocks": [],
+    "S&P500 Stocks": [579, ""],
+    "Nasdaq100 Stocks": [],
+    "US ETFs": [],
+    "UK Stocks": [],
+    "UK100 Stocks": [],
+    "UK ETFs": [],
+    "Japan Stocks": [],
+    "TOPIX30 Stocks": [],
+    "Nikkei225 Stocks": [],
+    "JP ETFs": [],
+    "German Stocks": [],
+    "DAX Stocks": [],
+    "MDAX Stocks": [],
+    "Hong Kong Stocks": [],
+    "HSI Stocks": [],
+    "HK ETFs": [],
+    "Polish Stocks": [523, ""],
+    "WIG30 Stocks": [582, ""],
+    "Hungarian Stocks": [522, ""],
+    //**https://stooq.com/q/?s=opus.hu
+    "ALL": [0, ""]
+}
