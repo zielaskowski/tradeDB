@@ -139,17 +139,18 @@ def execute_sql(script: list, db_file: str) -> Dict:
     ans = {}
     try:
         con = engine.connect()
-        #db_file, detect_types=db.PARSE_COLNAMES | db.PARSE_DECLTYPES
-        #cur = con.cursor()
+        # db_file, detect_types=db.PARSE_COLNAMES | db.PARSE_DECLTYPES
+        # cur = con.cursor()
         for cmd in script:
-            resp=con.execute(db.text(cmd))
+            resp = con.execute(db.text(cmd))
             a = resp.fetchall()
             if a:
                 colnames = resp.keys()
                 ans[cmd] = pd.DataFrame(a, columns=colnames)
         return ans
-    except:
+    except db.exc.ResourceClosedError as err:
         print("SQL operation failed:")
+        print(err)
         return False
     finally:
         con.close()
@@ -167,7 +168,7 @@ def create_sql(db_file: str) -> bool:
     """
     sql_scheme = read_json(JSON_file)
     # create tables query for db
-    sql_cmd = ["PRAGMA foreign_keys = ON"]
+    sql_cmd = []#["PRAGMA foreign_keys = ON"]
     for tab in sql_scheme:
         tab_cmd = f"CREATE TABLE {tab}("
         for col in sql_scheme[tab]:
