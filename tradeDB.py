@@ -11,7 +11,7 @@ use workers based on context
 unpack provided arguments and check correctness or set defoults
 remember last used db, can be also set during initialization
 TODO:
-    consider managing sql connection to db
+    consider managing sql connection to db here
 
 get_stooq()
 Args:
@@ -25,8 +25,11 @@ Args:
             If none given will return all available for 'from' table
     start: start date for search
     end: end date for search
+
+get_wbdata()
+get data from WorldBank for country: GDP stock volume,
 """
-DB_file = "./stooq.sqlite"
+DB_file = "./trader.sqlite"
 
 
 class Trader:
@@ -121,5 +124,11 @@ class Trader:
             # get info on components
             # get industry
             resp = sql_stooq.put_sql(dat=dat, tab=tab, db_file=self.db)
-        print(dat)
+            if resp:
+                print(dat)
         return
+
+    def world_bank(self, what: str, country: str):
+        # "GDP": "INTEGER"
+        # "stooq_vol": "INTEGER"
+        pass

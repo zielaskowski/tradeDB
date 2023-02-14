@@ -2,12 +2,13 @@
     "GEO":
     //**https://wbdata.readthedocs.io/en/stable/
     {
-        "symbol": "TEXT PRIMARY KEY",
-        "country": "TEXT UNIQUE",
-        "continent": "TEXT UNIQUE",
+        "iso2": "TEXT PRIMARY KEY",
+        "country": "TEXT",
+        "iso2_region": "TEXT",
+        "region": "TEXT",
         "currency": "TEXT",
-        "GDP": "INTEGER",
-        "stooq_vol": "INTEGER",
+        "currency_code": "TEXT",
+        "currency_digit": "INTEGER",
         "last_upd": "TIMESTAMP"
     },
 
@@ -22,7 +23,7 @@
         "info": "TEXT",
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",
-        "FOREIGN": { "country": "GEO(symbol)" }
+        "FOREIGN": { "country": "GEO(iso2)" }
     },
 
     "INDEXES": {
@@ -45,7 +46,7 @@
         "info": "TEXT",
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",
-        "FOREIGN": { "country": "GEO(symbol)" }
+        "FOREIGN": { "country": "GEO(iso2)" }
     },
     "ETF": {
         "HASH": "TEXT",
@@ -93,13 +94,13 @@
         "info": "TEXT",
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",
-        "FOREIGN": { "country": "GEO(symbol)" }
+        "FOREIGN": { "country": "GEO(iso2)" }
     },
 //** all prices in SQL are written in USD, so we need relation to USD only
     "CURRENCY": { 
-        "symbol": "TEXT",
+        "iso2": "TEXT",
         "toUSD": "INTEGER",
         "date": "TIMESTAMP",
-        "FOREIGN":{"symbol":"GEO(currency)"}
+        "FOREIGN":{"iso2":"GEO(iso2)"}
     }
 }

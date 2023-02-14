@@ -4,6 +4,8 @@ import re
 import sqlite3
 import pandas as pd
 import hashlib
+import wbdata as wb
+from datetime import date
 from workers.common import read_json
 
 """manages SQL db.
@@ -24,7 +26,8 @@ Args:
 """
 
 
-JSON_file = "./assets/sql_scheme.json"
+SQL_file = "./assets/sql_scheme.json"
+CURR_file = "./assets/currencies.csv"
 
 
 def get_sql(
@@ -58,7 +61,7 @@ def get_sql(
     return resp
 
 
-def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> bool:
+def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
     dat["tab"] = tab
     dat["HASH"] = [
         hashlib.md5("".join(r).encode("utf-8")).hexdigest()
@@ -73,8 +76,9 @@ def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> bool:
         print(
             f"Not known column {list(dat.columns[[not c for c in match_columns]])} in table. Can not write to sql."
         )
-        return False
+        return {}
     # write description (must be first becouse HASH is primary key)
+    dat_desc = dat.loc[:, ['HASH', 'symbol', 'name']]
 
     # then write table
     records = list(dat.astype('string').to_records(index=False))
@@ -85,8 +89,8 @@ def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> bool:
         for values_list in records
     ]
     resp = execute_sql(cmd, db_file)
-    # check resp if wrote correctly
-    print('Data stored in sql.')
+    if resp:
+        print('Data stored in sql.')
     return resp
 
 
@@ -112,7 +116,7 @@ def check_sql(db_file: str) -> bool:
         create_sql(db_file)
         return False
 
-    sql_scheme = read_json(JSON_file)
+    sql_scheme = read_json(SQL_file)
     for i in range(len(sql_scheme)):
         tab = list(sql_scheme.keys())[i]
         scheme_cols = [k for k in sql_scheme[tab].keys() if k != "FOREIGN"]
@@ -136,6 +140,9 @@ def execute_sql(script: list, db_file: str) -> Dict:
             {command: response in form of pd.DataFrame}
     """
     ans = {}
+    # Foreign key constraints are disabled by default,
+    # so must be enabled separately for each database connection.
+    script = ["PRAGMA foreign_keys = ON"]+script
     try:
         con = sqlite3.connect(
             db_file, detect_types=sqlite3.PARSE_COLNAMES | sqlite3.PARSE_DECLTYPES
@@ -147,14 +154,17 @@ def execute_sql(script: list, db_file: str) -> Dict:
             if a:
                 colnames = [c[0] for c in cur.description]
                 ans[cmd] = pd.DataFrame(a, columns=colnames)
+        con.commit()
         return ans
+    except sqlite3.IntegrityError as err:
+        print('In command:')
+        print(cmd)
+        print(err)
+        return {}
     except sqlite3.Error as err:
         print("SQL operation failed:")
         print(err)
-        return False
-    except sqlite3.Warning as war:
-        print("DB integrity error:")
-        print(war)
+        return {}
     finally:
         cur.close()
         con.close()
@@ -170,9 +180,9 @@ def create_sql(db_file: str) -> bool:
     Returns:
         bool: True if success, False otherway
     """
-    sql_scheme = read_json(JSON_file)
+    sql_scheme = read_json(SQL_file)
     # create tables query for db
-    sql_cmd = ["PRAGMA foreign_keys = ON"]
+    sql_cmd = []
     for tab in sql_scheme:
         tab_cmd = f"CREATE TABLE {tab}("
         for col in sql_scheme[tab]:
@@ -188,14 +198,49 @@ def create_sql(db_file: str) -> bool:
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
     status = execute_sql(sql_cmd, db_file)
 
-    # write currency
-    # write GEO info
-
     if status[sql_cmd[-1]]["tbl_name"].to_list() != list(sql_scheme.keys()):
         if os.path.isfile(db_file):
             os.remove(db_file)
         print("DB not created")
         return False
-    else:
-        print("empty DB created")
-        return True
+
+    # write GEO info
+    records = __create_geo__()
+    cmd = [f"""INSERT OR REPLACE INTO GEO {tuple(sql_scheme['GEO'].keys())}
+                            VALUES {g}
+            """ for g in records]
+    status = execute_sql(cmd, db_file)
+    if not status:
+        return False
+    print("new DB created")
+    return True
+
+
+def __create_geo__() -> list:
+    """create input for GEO table:
+    - countries with iso code and region
+    - currency of each country"""
+    sql_scheme = read_json(SQL_file)
+    countries = [(c['iso2Code'],
+                  c['name'],
+                  c['region']['iso2code'],
+                  c['region']['value'])
+                 for c in wb.search_countries(".*")
+                 if c['region']['value'] != 'Aggregates']
+    con = pd.DataFrame(countries, columns=[
+                       "iso2", "country", "iso2_region", "region"])
+    con = con.apply(lambda x: x.str.upper())
+
+    cur = pd.read_csv(CURR_file)
+    cur = cur.loc[cur['withdrawal_date'].isna(), :]
+    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\\s*\(", ", ", x))
+    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
+
+    geo = con.merge(right=cur, how="left",
+                    left_on="country", right_on="Entity")
+    geo = geo[["iso2", "country", "iso2_region",
+               "region", "currency", "code", "numeric_code"]]
+    geo['last_upd'] = date.today()
+    geo = geo.set_axis(list(sql_scheme['GEO'].keys()), axis='columns')
+    geo.fillna("", inplace=True)
+    return list(geo.astype('string').to_records(index=False))
