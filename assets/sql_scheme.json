@@ -1,4 +1,6 @@
 {
+    //** column names with lower case
+    //** data ONLY upper case, with exception for 'info'
     "GEO":
     //**https://wbdata.readthedocs.io/en/stable/
     {
@@ -14,12 +16,9 @@
 
     "INDEXES_DESC": { //**INDEX is reserved keyword
         "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'INDEXES'
-        "symbol": "TEXT",
-        "name": "TEXT",
         "components": "TEXT",
         "country": "TEXT",
         "industry": "TEXT",
-        "sector": "TEXT",
         "info": "TEXT",
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",
@@ -37,12 +36,9 @@
     },
     "ETF_DESC": {
         "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
-        "symbol": "TEXT",
-        "name": "TEXT",
         "components": "TEXT",
         "country": "TEXT",
         "industry": "TEXT",
-        "sector": "TEXT",
         "info": "TEXT",
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",
@@ -59,8 +55,6 @@
     },
     "COMODITIES_DESC": {
         "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
-        "symbol": "TEXT",
-        "name": "TEXT",
         "sector": "TEXT",
         "info": "TEXT",
         "from_date": "TIMESTAMP",
@@ -86,11 +80,8 @@
 
     "STOCK_DESC": {
         "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'STOCK'
-        "symbol": "TEXT",
-        "name": "TEXT",
         "country": "TEXT",
         "industry": "TEXT",
-        "sector": "TEXT",
         "info": "TEXT",
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",

@@ -1,9 +1,11 @@
 import os
 import sys
 import re
+import pandas as pd
+from typing import Tuple, List
 from workers.common import read_json
 from workers import web_stooq
-from workers import sql_stooq
+from workers import sql
 from datetime import date
 
 """manages getting stock data
@@ -64,7 +66,7 @@ class Trader:
         except Exception as err:
             sys.exit(err)
 
-    def __check_sector__(self, tab: str, sector: str) -> list:
+    def __check_sector__(self, tab: str, sector: str) -> List[str]:
         return [
             k
             for k in self.SECTORS[tab]["data"]
@@ -99,12 +101,14 @@ class Trader:
         if not symbol and (not sector or sector == "ALL"):
             print("Missing symbol or sector.")
             print("Possible sectors are:")
-            [print(sec) for sec in self.SECTORS[tab]["data"] if sec != "ALL"]
+            [print(sec)
+             for sec in self.SECTORS[tab]["data"]
+             if sec != "ALL"]
             return
         from_date = kwargs.get("start", date.today())
         end_date = kwargs.get("end", date.today())
 
-        dat = sql_stooq.get_sql(
+        dat = sql.get_index(
             db_file=self.db,
             tab=tab,
             sector=sector,
@@ -121,12 +125,79 @@ class Trader:
                 end_date=end_date,
             )
             # extract countries
+            # for indexes, country is within name
+            dat['name'], dat['country'] = self.country_txt(dat['name'])
+            # get dates
+            min_sql = [sql.get_sql(tab+'_DESC',
+                                   get='from_date',
+                                   search=h,
+                                   cols=['HASH'],
+                                   db_file=self.db)
+                       for h in dat['HASH']]
+            min_dat = dat['date'].min()
+            dat['from_date'] = min(min_sql, min_dat)
+            max_sql = [sql.get_sql(tab+'_DESC',
+                                   get='to_date',
+                                   search=h,
+                                   cols=['HASH'],
+                                   db_file=self.db)
+                       for h in dat['HASH']]
+            max_dat = dat['date'].max()
+            dat['to_date'] = min(max_sql, max_dat)
             # get info on components
             # get industry
-            resp = sql_stooq.put_sql(dat=dat, tab=tab, db_file=self.db)
+            resp = sql.put_sql(dat=dat, tab=tab, db_file=self.db)
             if resp:
                 print(dat)
+                return
+        else:
+            print(dat)
         return
+
+    def country_txt(self, names: pd.Series) -> Tuple[List, List]:
+        """Extract country from names
+        expected is '^index name - <COUNTRY>$'
+        returns tuple:
+        - short name (after removing country)
+        - country iso code if country found within name
+        """
+        countries = sql.get_sql(tab="GEO",
+                                get="country",
+                                search=["%"],
+                                db_file=self.db)['country']['country']
+
+        split = [re.split(' - ', n) for n in names]
+        name_short = [s[0] for s in split]
+        name_country = [s[1] for s in split]
+
+        # simplify countries - special cases
+        # name_country = [re.sub(r",.*$", "", c) for c in countries]
+        # name_country = [re.sub(r"\(.*$", "", c) for c in name_country]
+        name_country = [re.sub(r'SOUTH KOREA', r'KOREA, REP.', c)
+                        for c in name_country]
+
+        match = [re.search(c, r'-'.join(countries))
+                 for c in name_country]
+        # handle what not found
+        for i in range(len(match)):
+            if not match[i]:
+                name_short[i] = names[i]
+                name_country[i] = ''
+        # search of iso codes needs to be in loop
+        # otherway will be unique in alphabetical order and missing empty rows
+        resp = [sql.get_sql(tab="GEO",
+                            get="iso2",
+                            search=[n+'%'],
+                            cols=['country'],
+                            db_file=self.db)
+                for n in name_country]
+        iso2 = []
+        for r in resp:
+            if not r:
+                iso2 += ['']
+            else:
+                iso2 += [r['country']['iso2'].to_list()[0]]
+        return (name_short, iso2)
 
     def world_bank(self, what: str, country: str):
         # "GDP": "INTEGER"

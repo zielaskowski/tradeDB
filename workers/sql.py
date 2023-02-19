@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict, Union, List
 import os
 import re
 import sqlite3
@@ -30,10 +30,14 @@ SQL_file = "./assets/sql_scheme.json"
 CURR_file = "./assets/currencies.csv"
 
 
-def get_sql(
+def get_index(
     db_file: str, tab: str, sector: str, symbol: str, from_date: str, end_date: str
-) -> Union[bool, pd.DataFrame]:
-    """get data from sql db
+) -> Union[bool, Dict]:
+    """get data from sql db about index 
+    (from tabs: INDEXES, INDEXES_DESC, GEO)
+    may also translate currency
+
+    using get_sql() (kind of wrapper)
 
     Args:
         db_file: db file
@@ -57,7 +61,6 @@ def get_sql(
                 AND sector LIKE '{sector}'""",
     ]
     resp = execute_sql(cmd, db_file)
-    # convert resp to panda
     return resp
 
 
@@ -71,30 +74,89 @@ def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
 
     # check if we have correct columns
     sql_columns = tab_columns(tab, db_file)
-    match_columns = [col in sql_columns for col in dat.columns]
+    sql_columns_desc = tab_columns(tab+'_DESC', db_file)
+    match_columns = [col in sql_columns+sql_columns_desc
+                     for col in dat.columns]
     if not all(match_columns):
         print(
             f"Not known column {list(dat.columns[[not c for c in match_columns]])} in table. Can not write to sql."
         )
         return {}
-    # write description (must be first becouse HASH is primary key)
-    dat_desc = dat.loc[:, ['HASH', 'symbol', 'name']]
 
+    # write description (must be first becouse HASH is primary key)
+    resp = write_table(dat.loc[:, [c in sql_columns_desc for c in dat.columns]],
+                       tab+'_DESC',
+                       db_file)
     # then write table
-    records = list(dat.astype('string').to_records(index=False))
+    resp = write_table(dat.loc[:, [c in sql_columns for c in dat.columns]],
+                       tab,
+                       db_file)
+    if resp:
+        print('Data stored in sql.')
+    return resp
+
+
+def write_table(dat: pd.DataFrame,
+                tab: str,
+                db_file: str) -> Dict[str, pd.DataFrame]:
+    """writes DataFrame to SQL table 'tab'
+    """
+    records = list(dat
+                   .astype('string')
+                   .to_records(index=False))
     cmd = [
         f"""INSERT OR REPLACE INTO {tab} {tuple(dat.columns)}
             VALUES {values_list}
         """
         for values_list in records
     ]
+    return execute_sql(cmd, db_file)
+
+
+def get_sql(tab:str, get: str, search: list, db_file: str, cols=['all']) -> Dict[str, pd.DataFrame]:
+    """get info from geo table
+
+    Args:
+        tab: table to search
+        get: column name to extract
+        search: what to get (use '*' for everything)
+        cols: columns used for searching
+    """
+    get = get.lower()
+    all_cols = tab_columns(tab="GEO", db_file=db_file)
+    search = [s.upper() for s in search]
+    if cols[0].lower() == 'all':
+        cols = all_cols
+    else:
+        cols = [c.lower() for c in cols]
+    if get not in all_cols:
+        print(f"Not correct get={get} argument.")
+        print(f"possible options: {cols}")
+        return {}
+
+    # check if tab exists!
+    sql_scheme = read_json(SQL_file)
+    if tab not in sql_scheme.keys():
+        print('Wrong table name. Existing tables:')
+        print(list(sql_scheme.keys()))
+        return {}
+
+    cmd = []
+    for c in cols:
+        part_cmd = f"SELECT {get} FROM {tab} WHERE "
+        part_cmd += ' '.join([f"{c} LIKE '{s}' OR " for s in search])
+        part_cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
+        cmd += [part_cmd]
     resp = execute_sql(cmd, db_file)
-    if resp:
-        print('Data stored in sql.')
+    # rename resp keys to column name
+    resp = {re.search(r'(?<=WHERE\s)\w*', r)
+            .group()
+            .strip(): resp[r]
+            for r in resp}
     return resp
 
 
-def tab_columns(tab: str, db_file: str) -> list:
+def tab_columns(tab: str, db_file: str) -> List[str]:
     """return list of columns for table"""
     sql_cmd = [f"pragma table_info({tab})"]
     resp = execute_sql(sql_cmd, db_file)[sql_cmd[0]]
@@ -127,7 +189,7 @@ def check_sql(db_file: str) -> bool:
     return True
 
 
-def execute_sql(script: list, db_file: str) -> Dict:
+def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
     """Execute provided SQL commands.
     If db returns anything write as dict {command: respose as pd.DataFrame}
 
@@ -155,6 +217,8 @@ def execute_sql(script: list, db_file: str) -> Dict:
                 colnames = [c[0] for c in cur.description]
                 ans[cmd] = pd.DataFrame(a, columns=colnames)
         con.commit()
+        if not ans:
+            ans['script'] = 'success'
         return ans
     except sqlite3.IntegrityError as err:
         print('In command:')
