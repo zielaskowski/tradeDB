@@ -86,6 +86,7 @@ def convert_date(dates: pd.Series) -> pd.Series:
 
 def split_groups(data: pd.DataFrame, grp: str) -> pd.DataFrame:
     # extract 'grp' rows from 'data' DataFrame
+    # if no groups, search for apendix
     grpNameRows = data.iloc[:, 1] == data.iloc[:, 2]
     grpName = data.loc[grpNameRows, "Name"].to_frame()
 

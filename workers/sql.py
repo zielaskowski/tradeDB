@@ -3,7 +3,6 @@ import os
 import re
 import sqlite3
 import pandas as pd
-import hashlib
 import wbdata as wb
 from datetime import date
 from workers.common import read_json
@@ -31,8 +30,13 @@ CURR_file = "./assets/currencies.csv"
 
 
 def get_index(
-    db_file: str, tab: str, sector: str, symbol: str, from_date: str, end_date: str
-) -> Union[bool, Dict]:
+    db_file: str,
+    tab: str,
+    sector: str,
+    symbol: str,
+    from_date: str,
+    end_date: str
+) -> Dict:
     """get data from sql db about index 
     (from tabs: INDEXES, INDEXES_DESC, GEO)
     may also translate currency
@@ -48,7 +52,7 @@ def get_index(
         end_date: last date of data (including)
     """
     if not check_sql(db_file):
-        return False
+        return {}
 
     cmd = [
         f"""SELECT * FROM {tab}
@@ -65,12 +69,6 @@ def get_index(
 
 
 def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
-    dat["tab"] = tab
-    dat["HASH"] = [
-        hashlib.md5("".join(r).encode("utf-8")).hexdigest()
-        for r in dat.loc[:, ["symbol", "name", "tab"]].to_records(index=False)
-    ]
-    dat.drop(columns=["tab"], inplace=True)
 
     # check if we have correct columns
     sql_columns = tab_columns(tab, db_file)
@@ -113,7 +111,11 @@ def write_table(dat: pd.DataFrame,
     return execute_sql(cmd, db_file)
 
 
-def get_sql(tab:str, get: str, search: list, db_file: str, cols=['all']) -> Dict[str, pd.DataFrame]:
+def get_sql(tab: str,
+            get: str,
+            search: list,
+            db_file: str,
+            cols=['all']) -> Dict[str, pd.DataFrame]:
     """get info from geo table
 
     Args:
@@ -123,12 +125,14 @@ def get_sql(tab:str, get: str, search: list, db_file: str, cols=['all']) -> Dict
         cols: columns used for searching
     """
     get = get.lower()
-    all_cols = tab_columns(tab="GEO", db_file=db_file)
+    all_cols = tab_columns(tab=tab, db_file=db_file)
     search = [s.upper() for s in search]
     if cols[0].lower() == 'all':
         cols = all_cols
     else:
         cols = [c.lower() for c in cols]
+        cols = [re.sub(r'hash', 'HASH', c, flags=re.IGNORECASE)
+                for c in cols]
     if get not in all_cols:
         print(f"Not correct get={get} argument.")
         print(f"possible options: {cols}")
@@ -149,10 +153,8 @@ def get_sql(tab:str, get: str, search: list, db_file: str, cols=['all']) -> Dict
         cmd += [part_cmd]
     resp = execute_sql(cmd, db_file)
     # rename resp keys to column name
-    resp = {re.search(r'(?<=WHERE\s)\w*', r)
-            .group()
-            .strip(): resp[r]
-            for r in resp}
+    resp = {cols[cmd.index(c)]: resp[c]
+            for c in cmd}
     return resp
 
 
@@ -216,9 +218,9 @@ def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
             if a:
                 colnames = [c[0] for c in cur.description]
                 ans[cmd] = pd.DataFrame(a, columns=colnames)
+            else:
+                ans[cmd] = pd.DataFrame([''])
         con.commit()
-        if not ans:
-            ans['script'] = 'success'
         return ans
     except sqlite3.IntegrityError as err:
         print('In command:')

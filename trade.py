@@ -10,4 +10,5 @@ def main(**kwargs):
 
 main(tab="STOCK")
 main(tab="STOCK", sector="nyse")
-main(tab="INDEXES", sector="asia")
+main(tab="INDEXES")
+main(tab="INDEXES", sector="east asia")

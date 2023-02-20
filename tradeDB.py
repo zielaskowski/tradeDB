@@ -2,7 +2,8 @@ import os
 import sys
 import re
 import pandas as pd
-from typing import Tuple, List
+import hashlib
+from typing import Tuple, List, Callable
 from workers.common import read_json
 from workers import web_stooq
 from workers import sql
@@ -62,9 +63,11 @@ class Trader:
     def __read_sectors(self) -> None:
         try:
             for k in self.SECTORS:
-                self.SECTORS[k]["data"] = read_json(self.SECTORS[k]["file"])
+                self.SECTORS[k]["data"] = read_json(  # type: ignore
+                    self.SECTORS[k]["file"]
+                )
         except Exception as err:
-            sys.exit(err)
+            sys.exit(str(err))
 
     def __check_sector__(self, tab: str, sector: str) -> List[str]:
         return [
@@ -118,34 +121,14 @@ class Trader:
         )
         if not dat:
             dat = web_stooq.web_stooq(
-                sector_id=self.SECTORS[tab]["data"][sector][0],
+                sector_id=self.SECTORS[tab]["data"][sector][0],  # type: ignore
+                # type: ignore
                 sector_grp=self.SECTORS[tab]["data"][sector][1],
                 symbol=symbol + "%",
                 from_date=from_date,
                 end_date=end_date,
             )
-            # extract countries
-            # for indexes, country is within name
-            dat['name'], dat['country'] = self.country_txt(dat['name'])
-            # get dates
-            min_sql = [sql.get_sql(tab+'_DESC',
-                                   get='from_date',
-                                   search=h,
-                                   cols=['HASH'],
-                                   db_file=self.db)
-                       for h in dat['HASH']]
-            min_dat = dat['date'].min()
-            dat['from_date'] = min(min_sql, min_dat)
-            max_sql = [sql.get_sql(tab+'_DESC',
-                                   get='to_date',
-                                   search=h,
-                                   cols=['HASH'],
-                                   db_file=self.db)
-                       for h in dat['HASH']]
-            max_dat = dat['date'].max()
-            dat['to_date'] = min(max_sql, max_dat)
-            # get info on components
-            # get industry
+            dat = self.describe_table(dat, tab)
             resp = sql.put_sql(dat=dat, tab=tab, db_file=self.db)
             if resp:
                 print(dat)
@@ -153,6 +136,50 @@ class Trader:
         else:
             print(dat)
         return
+
+    def describe_table(self, dat: pd.DataFrame, tab: str) -> pd.DataFrame:
+        # extract countries
+        ######
+        # for indexes, country is within name
+        dat['name'], dat['country'] = self.country_txt(dat['name'])
+
+        # hash table
+        ######
+        dat["tab"] = tab
+        dat["HASH"] = [
+            hashlib.md5("".join(r).encode("utf-8")).hexdigest()
+            for r in dat.loc[:, ["symbol", "name", "tab"]].to_records(index=False)
+        ]
+        dat.drop(columns=["tab"], inplace=True)
+
+        # get dates
+        ######
+        def minmax(func: Callable, dat: pd.DataFrame) -> List:
+            minmax_date = []
+            for h in dat['HASH']:
+                date_sql = sql.get_sql(tab+'_DESC',
+                                       get='from_date',
+                                       search=[h],
+                                       cols=['HASH'],
+                                       db_file=self.db)['HASH'].iloc[0, 0]
+                HASHrows = dat['HASH'] == h
+                if date_sql:
+                    minmax_date += [func(dat.loc[HASHrows, 'date'],
+                                         date_sql)]  # type: ignore
+                else:
+                    minmax_date += [func(dat.loc[HASHrows, 'date'])]
+            return minmax_date
+        dat['from_date'] = minmax(min, dat)
+        dat['to_date'] = minmax(max, dat)
+        # convert currency (if not INDEX)
+        #####
+        # get info on components
+        ######
+        # ....
+        # get industry
+        ######
+        # ....
+        return dat
 
     def country_txt(self, names: pd.Series) -> Tuple[List, List]:
         """Extract country from names
@@ -168,11 +195,12 @@ class Trader:
 
         split = [re.split(' - ', n) for n in names]
         name_short = [s[0] for s in split]
+        # just small cleaning
+        name_short = [re.sub(r'INDEX', '', n).strip()
+                      for n in name_short]
         name_country = [s[1] for s in split]
 
         # simplify countries - special cases
-        # name_country = [re.sub(r",.*$", "", c) for c in countries]
-        # name_country = [re.sub(r"\(.*$", "", c) for c in name_country]
         name_country = [re.sub(r'SOUTH KOREA', r'KOREA, REP.', c)
                         for c in name_country]
 

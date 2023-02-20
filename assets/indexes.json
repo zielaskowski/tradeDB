@@ -1,8 +1,19 @@
+//** make sure you are aligned with table GEO:
+//**LATIN AMERICA & CARIBBEAN"
+//**SOUTH ASIA
+//**SUB-SAHARAN AFRICA
+//**EUROPE & CENTRAL ASIA
+//**MIDDLE EAST & NORTH AFRICA
+//**EAST ASIA & PACIFIC
+//**NORTH AMERICA
+//**[id for API, table group or appendix in name]
+//**            (minus is all without appendix)]
 {
-    "asia": [524, ""],
-    "europe": [525, ""],
-    "america": [526, ""],
-    "middle-east": [510, "Middle East"],
+    "EAST ASIA & PACIFIC": [524, ""],
+    "EUROPE & CENTRAL ASIA": [525, "-U.S."],
+    "NORTH AMERICA": [526, "U.S."],
+    "LATIN AMERICA & CARIBBEAN": [526, ""],
+    "MIDDLE EAST & NORTH AFRICA": [510, "Middle East"],
     "others": [510, "Others"],
     "S&P_Main": [549, "Main"],
     "S&P_Sector": [549, "Sector"],
