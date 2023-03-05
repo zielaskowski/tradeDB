@@ -15,8 +15,7 @@
     },
 
     "INDEXES_DESC": { //**INDEX is reserved keyword
-        "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'INDEXES'
-        "components": "TEXT",
+        "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'INDEXES'
         "country": "TEXT",
         "industry": "TEXT",
         "info": "TEXT",
@@ -26,16 +25,16 @@
     },
 
     "INDEXES": {
-        "HASH": "TEXT",
+        "hash": "TEXT",
         "symbol": "TEXT",
         "name": "TEXT",
         "vol": "INTEGER",
         "val": "INTEGER",
         "date": "TIMESTAMP",
-        "FOREIGN": { "HASH": "INDEXES_DESC(HASH)" }
+        "FOREIGN": { "hash": "INDEXES_DESC(hash)" }
     },
     "ETF_DESC": {
-        "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
+        "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
         "components": "TEXT",
         "country": "TEXT",
         "industry": "TEXT",
@@ -45,13 +44,13 @@
         "FOREIGN": { "country": "GEO(iso2)" }
     },
     "ETF": {
-        "HASH": "TEXT",
+        "hash": "TEXT",
         "symbol": "TEXT",
         "name": "TEXT",
         "vol": "INTEGER",
         "val": "INTEGER",
         "date": "TIMESTAMP",
-        "FOREIGN": { "HASH": "ETF_DESC(HASH)" }
+        "FOREIGN": { "hash": "ETF_DESC(hash)" }
     },
     "COMODITIES_DESC": {
         "HASH": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
@@ -61,12 +60,12 @@
         "to_date": "TIMESTAMP"
     },
     "COMODITIES": {
-        "HASH": "TEXT",
+        "hash": "TEXT",
         "symbol": "TEXT",
         "vol": "INTEGER",
         "val": "INTEGER",
         "date": "TIMESTAMP",
-        "FOREIGN": { "HASH": "COMODITIES_DESC(HASH)" }
+        "FOREIGN": { "hash": "COMODITIES_DESC(hash)" }
     },
 
     "STOCK": {
@@ -75,7 +74,7 @@
         "vol": "INTEGER",
         "val": "INTEGER",
         "date": "TIMESTAMP",
-        "FOREIGN": { "HASH": "STOCK_DESC(HASH)" }
+        "FOREIGN": { "hash": "STOCK_DESC(hash)" }
     },
 
     "STOCK_DESC": {
@@ -86,6 +85,14 @@
         "from_date": "TIMESTAMP",
         "to_date": "TIMESTAMP",
         "FOREIGN": { "country": "GEO(iso2)" }
+    },
+    "COMPONENTS":{
+    //** connection between indexes and stock
+    //** one stock can be in more  then one index
+    "indexes_hash": "TEXT",
+    "stock_hash": "TEXT",
+    "FOREIGN": [{"indexes_hash": "INDEXES(hash)"},
+                {"stock_hash": "STOCK(hash)"}]
     },
 //** all prices in SQL are written in USD, so we need relation to USD only
     "CURRENCY": { 

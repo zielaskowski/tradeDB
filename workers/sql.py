@@ -89,6 +89,10 @@ def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
     resp = write_table(dat.loc[:, [c in sql_columns for c in dat.columns]],
                        tab,
                        db_file)
+    ####
+    #HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
+    ####
+
     if resp:
         print('Data stored in sql.')
     return resp
@@ -162,6 +166,9 @@ def tab_columns(tab: str, db_file: str) -> List[str]:
     """return list of columns for table"""
     sql_cmd = [f"pragma table_info({tab})"]
     resp = execute_sql(sql_cmd, db_file)[sql_cmd[0]]
+    if "name" not in list(resp):
+        # table dosen't exists
+        return []
     return resp["name"].to_list()
 
 
@@ -176,8 +183,7 @@ def check_sql(db_file: str) -> bool:
         bool: True if correct file, False otherway
     """
     if not os.path.isfile(db_file):
-        print(f"DB file '{db_file}' is missing. Trying to create...")
-        create_sql(db_file)
+        print(f"DB file '{db_file}' is missing.")
         return False
 
     sql_scheme = read_json(SQL_file)
@@ -202,6 +208,8 @@ def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
     Returns:
         Dict: dict of response from sql
             {command: response in form of pd.DataFrame}
+            or
+            {} in case of failure
     """
     ans = {}
     # Foreign key constraints are disabled by default,
@@ -246,6 +254,9 @@ def create_sql(db_file: str) -> bool:
     Returns:
         bool: True if success, False otherway
     """
+    if os.path.isfile(db_file):
+        # just in case the file exists
+        os.remove(db_file)
     sql_scheme = read_json(SQL_file)
     # create tables query for db
     sql_cmd = []
@@ -264,20 +275,24 @@ def create_sql(db_file: str) -> bool:
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
     status = execute_sql(sql_cmd, db_file)
 
-    if status[sql_cmd[-1]]["tbl_name"].to_list() != list(sql_scheme.keys()):
+    if status == {} or \
+            status[sql_cmd[-1]]["tbl_name"].to_list() != list(sql_scheme.keys()):
         if os.path.isfile(db_file):
             os.remove(db_file)
         print("DB not created")
         return False
 
     # write GEO info
+    print("writing GEO info to db...")
     records = __create_geo__()
     cmd = [f"""INSERT OR REPLACE INTO GEO {tuple(sql_scheme['GEO'].keys())}
                             VALUES {g}
             """ for g in records]
     status = execute_sql(cmd, db_file)
     if not status:
+        print("Problem with GEO data")
         return False
+
     print("new DB created")
     return True
 

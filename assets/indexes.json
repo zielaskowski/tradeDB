@@ -6,18 +6,51 @@
 //**MIDDLE EAST & NORTH AFRICA
 //**EAST ASIA & PACIFIC
 //**NORTH AMERICA
-//**[id for API, table group or appendix in name]
-//**            (minus is all without appendix)]
+//**[id for API, table group or appendix in name (if group is missing)]
+//**            (minus is all without appendix, list of apendixes split with ';')]
 {
-    "EAST ASIA & PACIFIC": [524, ""],
-    "EUROPE & CENTRAL ASIA": [525, "-U.S."],
-    "NORTH AMERICA": [526, "U.S."],
-    "LATIN AMERICA & CARIBBEAN": [526, ""],
-    "MIDDLE EAST & NORTH AFRICA": [510, "Middle East"],
-    "others": [510, "Others"],
-    "S&P_Main": [549, "Main"],
-    "S&P_Sector": [549, "Sector"],
-    "S&P_volatility": [549, "Volatility"],
-    "S&P_Commodity": [549, "Commodity"],
-    "S&P_Other": [549, "Other"]
+  "EAST ASIA & PACIFIC": {
+    "api": { "id": 524, "group": "" },
+    "description": {}
+  },
+  "EUROPE & CENTRAL ASIA": {
+    "api": { "id": 525, "group": "" },
+    "description": {}
+  },
+  "U.S.": {
+    "api": { "id": 526, "group": "U.S." },
+    "description": {}
+  },
+  "CANADA": {
+    "api": { "id": 526, "group": "CANADA" },
+    "description": {}
+  },
+  "U.S. Main": {
+    "api": { "id": 549, "group": "Main" },
+    "description": {"country":"UNITED STATES"}
+  },
+  "U.S. Sector": {
+    "api": { "id": 549, "group": "Sector" },
+    "description": {"country":"UNITED STATES"}
+  },
+  "U.S. Volatility": {
+    "api": { "id": 549, "group": "Volatility" },
+    "description": {"country":"UNITED STATES"}
+  },
+  "U.S. Comodity": {
+    "api": { "id": 549, "group": "Commodity" },
+    "description": {"country":"UNITED STATES"}
+  },
+  "U.S. Other": {
+    "api": { "id": 549, "group": "Other" },
+    "description": {"country":"UNITED STATES"}
+  },
+  "LATIN AMERICA & CARIBBEAN": {
+    "api": { "id": 526, "group": "-U.S.;-CANADA" },
+    "description": {}
+  },
+  "MIDDLE EAST & NORTH AFRICA": {
+    "api": { "id": 510, "group": "Middle East" },
+    "description": {}
+  }
 }
