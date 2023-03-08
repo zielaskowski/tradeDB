@@ -1,10 +1,12 @@
-from typing import Dict, Union, List
 import os
 import re
 import sqlite3
+from datetime import date
+from typing import Dict, List
+
 import pandas as pd
 import wbdata as wb
-from datetime import date
+
 from workers.common import read_json
 
 """manages SQL db.
@@ -29,15 +31,10 @@ SQL_file = "./assets/sql_scheme.json"
 CURR_file = "./assets/currencies.csv"
 
 
-def get_index(
-    db_file: str,
-    tab: str,
-    sector: str,
-    symbol: str,
-    from_date: str,
-    end_date: str
+def get_indexes(
+    db_file: str, tab: str, sector: str, symbol: str, from_date: str, end_date: str
 ) -> Dict:
-    """get data from sql db about index 
+    """get data from sql db about index
     (from tabs: INDEXES, INDEXES_DESC, GEO)
     may also translate currency
 
@@ -68,44 +65,53 @@ def get_index(
     return resp
 
 
-def put_sql(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
+def tab_exists(tab: str) -> bool:
+    # check if tab exists!
+    sql_scheme = read_json(SQL_file)
+    if tab not in sql_scheme.keys():
+        print("Wrong table name. Existing tables:")
+        print(list(sql_scheme.keys()))
+        return False
+    return True
 
-    # check if we have correct columns
-    sql_columns = tab_columns(tab, db_file)
-    sql_columns_desc = tab_columns(tab+'_DESC', db_file)
-    match_columns = [col in sql_columns+sql_columns_desc
-                     for col in dat.columns]
-    if not all(match_columns):
-        print(
-            f"Not known column {list(dat.columns[[not c for c in match_columns]])} in table. Can not write to sql."
-        )
+
+def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
+    # put DataFrame into sql at table=tab
+    # if description table exists, writes first to 'tab_desc'
+    # takes from DataFrame only columns present in sql table
+    # check if tab exists!
+    if not tab_exists(tab):
         return {}
+    # all data shall be in capital letters!
+    dat = dat.apply(lambda x: x.str.upper() if isinstance(x, str) else x)  # type: ignore
 
-    # write description (must be first becouse HASH is primary key)
-    resp = write_table(dat.loc[:, [c in sql_columns_desc for c in dat.columns]],
-                       tab+'_DESC',
-                       db_file)
-    # then write table
-    resp = write_table(dat.loc[:, [c in sql_columns for c in dat.columns]],
-                       tab,
-                       db_file)
-    ####
-    #HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
-    ####
+    sql_scheme = read_json(SQL_file)
+    if tab + "_DESC" in sql_scheme.keys():
+        # description must be first becouse HASH is primary key there
+        tabL = [tab + "_DESC", tab]
+    else:
+        tabL = [tab]
 
+    for t in tabL:
+        sql_columns = tab_columns(t, db_file)
+        resp = write_table(
+            dat=dat.loc[:, [c in sql_columns for c in dat.columns]],
+            tab=t,
+            db_file=db_file,
+        )
+
+    ####
+    # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
+    ####
     if resp:
-        print('Data stored in sql.')
+        print("Data stored in sql.")
+
     return resp
 
 
-def write_table(dat: pd.DataFrame,
-                tab: str,
-                db_file: str) -> Dict[str, pd.DataFrame]:
-    """writes DataFrame to SQL table 'tab'
-    """
-    records = list(dat
-                   .astype('string')
-                   .to_records(index=False))
+def write_table(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.DataFrame]:
+    """writes DataFrame to SQL table 'tab'"""
+    records = list(dat.astype("string").to_records(index=False))
     cmd = [
         f"""INSERT OR REPLACE INTO {tab} {tuple(dat.columns)}
             VALUES {values_list}
@@ -115,12 +121,10 @@ def write_table(dat: pd.DataFrame,
     return execute_sql(cmd, db_file)
 
 
-def get_sql(tab: str,
-            get: str,
-            search: list,
-            db_file: str,
-            cols=['all']) -> Dict[str, pd.DataFrame]:
-    """get info from geo table
+def get(
+    tab: str, get: str, search: list, db_file: str, cols=["all"]
+) -> Dict[str, pd.DataFrame]:
+    """get info from table
 
     Args:
         tab: table to search
@@ -131,34 +135,29 @@ def get_sql(tab: str,
     get = get.lower()
     all_cols = tab_columns(tab=tab, db_file=db_file)
     search = [s.upper() for s in search]
-    if cols[0].lower() == 'all':
+    if cols[0].lower() == "all":
         cols = all_cols
     else:
         cols = [c.lower() for c in cols]
-        cols = [re.sub(r'hash', 'HASH', c, flags=re.IGNORECASE)
-                for c in cols]
     if get not in all_cols:
         print(f"Not correct get={get} argument.")
         print(f"possible options: {cols}")
         return {}
 
     # check if tab exists!
-    sql_scheme = read_json(SQL_file)
-    if tab not in sql_scheme.keys():
-        print('Wrong table name. Existing tables:')
-        print(list(sql_scheme.keys()))
+    if not tab_exists(tab):
         return {}
 
     cmd = []
     for c in cols:
         part_cmd = f"SELECT {get} FROM {tab} WHERE "
-        part_cmd += ' '.join([f"{c} LIKE '{s}' OR " for s in search])
+        part_cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search])
         part_cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
         cmd += [part_cmd]
+
     resp = execute_sql(cmd, db_file)
     # rename resp keys to column name
-    resp = {cols[cmd.index(c)]: resp[c]
-            for c in cmd}
+    resp = {cols[cmd.index(c)]: resp[c] for c in cmd}
     return resp
 
 
@@ -173,7 +172,7 @@ def tab_columns(tab: str, db_file: str) -> List[str]:
 
 
 def check_sql(db_file: str) -> bool:
-    """Check db file if aligned with scheme written in sql.json.
+    """Check db file if aligned with scheme written in sql_scheme.json.
     Check if table exists and if has the required columns
 
     Args:
@@ -214,24 +213,25 @@ def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
     ans = {}
     # Foreign key constraints are disabled by default,
     # so must be enabled separately for each database connection.
-    script = ["PRAGMA foreign_keys = ON"]+script
+    script = ["PRAGMA foreign_keys = ON"] + script
     try:
         con = sqlite3.connect(
             db_file, detect_types=sqlite3.PARSE_COLNAMES | sqlite3.PARSE_DECLTYPES
         )
         cur = con.cursor()
         for cmd in script:
+            print(cmd)
             cur.execute(cmd)
             a = cur.fetchall()
             if a:
                 colnames = [c[0] for c in cur.description]
                 ans[cmd] = pd.DataFrame(a, columns=colnames)
             else:
-                ans[cmd] = pd.DataFrame([''])
+                ans[cmd] = pd.DataFrame([""])
         con.commit()
         return ans
     except sqlite3.IntegrityError as err:
-        print('In command:')
+        print("In command:")
         print(cmd)
         print(err)
         return {}
@@ -245,8 +245,9 @@ def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
 
 
 def create_sql(db_file: str) -> bool:
-    """Creates sql query based on sql.json and send to db.
+    """Creates sql query based on sql_scheme.json and send to db.
     Perform check if created DB is aligned with scheme from sql.json file.
+    add GEO tab
 
     Args:
         db_file (str): file name
@@ -266,7 +267,8 @@ def create_sql(db_file: str) -> bool:
             if col != "FOREIGN":
                 tab_cmd += f"{col} {sql_scheme[tab][col]}, "
             else:  # FOREIGN
-                for k, v in sql_scheme[tab][col].items():
+                for foreign in sql_scheme[tab][col]:
+                    k, v = list(foreign.items())[0]
                     tab_cmd += f"FOREIGN KEY({k}) REFERENCES {v}, "
         tab_cmd = re.sub(",[^,]*$", "", tab_cmd)  # remove last comma
         tab_cmd += ")"
@@ -275,8 +277,9 @@ def create_sql(db_file: str) -> bool:
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
     status = execute_sql(sql_cmd, db_file)
 
-    if status == {} or \
-            status[sql_cmd[-1]]["tbl_name"].to_list() != list(sql_scheme.keys()):
+    if status == {} or status[sql_cmd[-1]]["tbl_name"].to_list() != list(
+        sql_scheme.keys()
+    ):
         if os.path.isfile(db_file):
             os.remove(db_file)
         print("DB not created")
@@ -284,11 +287,7 @@ def create_sql(db_file: str) -> bool:
 
     # write GEO info
     print("writing GEO info to db...")
-    records = __create_geo__()
-    cmd = [f"""INSERT OR REPLACE INTO GEO {tuple(sql_scheme['GEO'].keys())}
-                            VALUES {g}
-            """ for g in records]
-    status = execute_sql(cmd, db_file)
+    status = write_table(__geo_tab__(), tab="GEO", db_file=db_file)
     if not status:
         print("Problem with GEO data")
         return False
@@ -297,31 +296,31 @@ def create_sql(db_file: str) -> bool:
     return True
 
 
-def __create_geo__() -> list:
-    """create input for GEO table:
-    - countries with iso code and region
-    - currency of each country"""
+def __geo_tab__() -> pd.DataFrame:
+    """create input for GEO table.
+    - countries with iso code and region come from world bank data (lib: wbdata)
+    - currency of each country come from csv file"""
     sql_scheme = read_json(SQL_file)
-    countries = [(c['iso2Code'],
-                  c['name'],
-                  c['region']['iso2code'],
-                  c['region']['value'])
-                 for c in wb.search_countries(".*")
-                 if c['region']['value'] != 'Aggregates']
-    con = pd.DataFrame(countries, columns=[
-                       "iso2", "country", "iso2_region", "region"])
+    countries = [
+        (c["iso2Code"], c["name"], c["region"]["iso2code"], c["region"]["value"])
+        for c in wb.search_countries(".*")
+        if c["region"]["value"] != "Aggregates"
+    ]
+    con = pd.DataFrame(countries, columns=["iso2", "country", "iso2_region", "region"])
     con = con.apply(lambda x: x.str.upper())
 
     cur = pd.read_csv(CURR_file)
-    cur = cur.loc[cur['withdrawal_date'].isna(), :]
+    cur = cur.loc[cur["withdrawal_date"].isna(), :]
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\\s*\(", ", ", x))
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
 
-    geo = con.merge(right=cur, how="left",
-                    left_on="country", right_on="Entity")
-    geo = geo[["iso2", "country", "iso2_region",
-               "region", "currency", "code", "numeric_code"]]
-    geo['last_upd'] = date.today()
-    geo = geo.set_axis(list(sql_scheme['GEO'].keys()), axis='columns')
+    geo = con.merge(right=cur, how="left", left_on="country", right_on="Entity")
+    geo = geo[
+        ["iso2", "country", "iso2_region", "region", "currency", "code", "numeric_code"]
+    ]
+    geo["last_upd"] = date.today()
+    geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")
     geo.fillna("", inplace=True)
-    return list(geo.astype('string').to_records(index=False))
+    # add 'unknown' just in case
+    geo.loc[len(geo)] = ["UNKNOWN" for i in geo.columns]  # type: ignore
+    return geo

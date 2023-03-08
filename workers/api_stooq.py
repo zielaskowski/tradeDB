@@ -1,5 +1,6 @@
+import locale
 import re
-from datetime import date
+from contextlib import contextmanager
 from datetime import datetime as dt
 
 import numpy as np
@@ -18,9 +19,9 @@ STOOQ_COOKIE = "./assets/header_stooq.json"
 cookie = get_cookie(STOOQ_COOKIE)
 
 
-def web_stooq(
-    from_date: date,
-    end_date: date,
+def get(
+    from_date: dt,
+    end_date: dt,
     sector_id=0,
     sector_grp="",
     symbol="",
@@ -41,32 +42,33 @@ def web_stooq(
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
         # u: show/hide if change empty (not rated today)
-        data = read_sector_url(url)
+        data = take_page(url)
         if sector_grp != "":
             data = split_groups(data, sector_grp)
-        return data
+
     elif symbol:  # or we search particular item
         url = f"https://stooq.com/q/?s={symbol}"
-        data = read_sector_url(url)
+        data = take_page(url)
 
     elif components:  # if components included, download components
         url = f"https://stooq.com/q/i/?s={components}&l=%page%&i"
-        data = read_sector_url(url)
+        data = take_page(url)
 
     return data
 
 
-def read_sector_url(url: str) -> pd.DataFrame:
+def take_page(url: str) -> pd.DataFrame:
     data = pd.DataFrame()
     for i in range(1, 100):
-        url = re.sub("%page%", str(i), url)
-        resp = rq.get(url, headers=cookie)
+        resp = rq.get(url=re.sub("%page%", str(i), url).lower(), headers=cookie)
 
         if resp.status_code != 200:
             break
 
         page = bs(resp.content, "lxml")
         htmlTab = page.find(id="fth1")
+        if htmlTab is None:
+            break
         pdTab = pd.read_html(htmlTab.prettify())[0]  # type: ignore
 
         if pdTab.empty:
@@ -79,22 +81,10 @@ def read_sector_url(url: str) -> pd.DataFrame:
         pdTab.rename(str.lower, axis="columns", inplace=True)
         # rename polish to english
         pdTab.rename(
-            columns={
-                "nazwa": "name",
-                "kurs": "val",
-                "data": "date",
-                "zmiana": "change",
-            },
+            columns={"nazwa": "name", "kurs": "val", "data": "date", "wolumen": "vol"},
             inplace=True,
         )
-        # remove 'change' col, rename other columns (Last->val),
-        pdTab = pdTab.loc[
-            :,
-            [
-                re.search("(change|kapitalizacja|warto|zysk|ttm|c/wk|stopa)", c) is None
-                for c in pdTab.columns
-            ],
-        ]
+        # rename columns (Last->val),
         pdTab.rename(columns={"last": "val"}, inplace=True)
         # convert dates
         pdTab["date"] = convert_date(pdTab["date"])
@@ -104,18 +94,32 @@ def read_sector_url(url: str) -> pd.DataFrame:
 
 
 def convert_date(dates: pd.Series) -> pd.Series:
-    # set date: it's in 'mmm d' or 'hh:ss'
-    # return NaN if format not known
-    # this will handle hh:ss, setting date to today
-    d1 = pd.to_datetime(dates, errors="coerce")
+    # set date: it's in 'mmm d'(ENG) or 'd mmm'(PL) or 'hh:ss' for today
+    # return '' if format not known
+    @contextmanager
+    def setlocale(*args, **kwargs):
+        # temporary change locale
+        saved = locale.setlocale(locale.LC_ALL)
+        yield locale.setlocale(*args, **kwargs)
+        locale.setlocale(locale.LC_ALL, saved)
+
+    def date_locale(date: str, locale: str, format: str):
+        with setlocale(locale.LC_ALL, locale):  # type: ignore
+            return pd.to_datetime(date, errors="coerce", format=format)
+
     year = dt.today().strftime("%Y")
-    # to handle 'mmm d' we need add current year
-    d2 = pd.to_datetime(year + " " + dates, format="%Y %b %d", errors="coerce")
-    d3 = pd.to_datetime(
-        year + " " + dates, format="%Y %d %b", errors="coerce"
-    )  # 2022 22 Jan
+    d1 = pd.to_datetime(dates, errors="coerce")  # hh:ss
+    # 24 Feb 2023
+    d2 = dates.apply(lambda x: date_locale(x, "en_GB.utf8", "%d %b %Y"))  # type: ignore
+    # Jan 22
+    d3 = dates.apply(lambda x: date_locale(year + x, "en_GB.utf8", "%Y %b %d"))  # type: ignore
+    # 22 Lut
+    d4 = dates.apply(lambda x: date_locale(year + x, "pl_PL.utf8", "%Y %d %b"))  # type: ignore
+
     d1 = d1.fillna(d2)
     d1 = d1.fillna(d3)
+    d1 = d1.fillna(d4)
+    d1 = d1.fillna(" ")
     return d1.dt.date
 
 
