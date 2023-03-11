@@ -5,7 +5,7 @@ from tradeDB import Trader
 
 def main(**kwargs):
     akcje = Trader()
-    akcje.get_stooq(**kwargs)
+    akcje.get(**kwargs)
 
 
 main(tab="STOCK")

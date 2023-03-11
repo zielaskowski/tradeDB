@@ -15,7 +15,7 @@ called only when missing info in local db
 """
 
 
-STOOQ_COOKIE = "./assets/header_stooq.json"
+STOOQ_COOKIE = "./assets/header_stooq.jsonc"
 cookie = get_cookie(STOOQ_COOKIE)
 
 
@@ -42,22 +42,22 @@ def get(
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
         # u: show/hide if change empty (not rated today)
-        data = take_page(url)
+        data = __take_page__(url)
         if sector_grp != "":
-            data = split_groups(data, sector_grp)
+            data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
         url = f"https://stooq.com/q/?s={symbol}"
-        data = take_page(url)
+        data = __take_page__(url)
 
     elif components:  # if components included, download components
         url = f"https://stooq.com/q/i/?s={components}&l=%page%&i"
-        data = take_page(url)
+        data = __take_page__(url)
 
     return data
 
 
-def take_page(url: str) -> pd.DataFrame:
+def __take_page__(url: str) -> pd.DataFrame:
     data = pd.DataFrame()
     for i in range(1, 100):
         resp = rq.get(url=re.sub("%page%", str(i), url).lower(), headers=cookie)
@@ -87,13 +87,13 @@ def take_page(url: str) -> pd.DataFrame:
         # rename columns (Last->val),
         pdTab.rename(columns={"last": "val"}, inplace=True)
         # convert dates
-        pdTab["date"] = convert_date(pdTab["date"])
+        pdTab["date"] = __convert_date__(pdTab["date"])
 
         data = pd.concat([data, pdTab], ignore_index=True)
     return data
 
 
-def convert_date(dates: pd.Series) -> pd.Series:
+def __convert_date__(dates: pd.Series) -> pd.Series:
     # set date: it's in 'mmm d'(ENG) or 'd mmm'(PL) or 'hh:ss' for today
     # return '' if format not known
     @contextmanager
@@ -103,27 +103,24 @@ def convert_date(dates: pd.Series) -> pd.Series:
         yield locale.setlocale(*args, **kwargs)
         locale.setlocale(locale.LC_ALL, saved)
 
-    def date_locale(date: str, locale: str, format: str):
-        with setlocale(locale.LC_ALL, locale):  # type: ignore
+    def date_locale(date: pd.Series, local: str, format: str) -> pd.Series:
+        with setlocale(locale.LC_ALL, local):  # type: ignore
             return pd.to_datetime(date, errors="coerce", format=format)
 
     year = dt.today().strftime("%Y")
     d1 = pd.to_datetime(dates, errors="coerce")  # hh:ss
-    # 24 Feb 2023
-    d2 = dates.apply(lambda x: date_locale(x, "en_GB.utf8", "%d %b %Y"))  # type: ignore
-    # Jan 22
-    d3 = dates.apply(lambda x: date_locale(year + x, "en_GB.utf8", "%Y %b %d"))  # type: ignore
-    # 22 Lut
-    d4 = dates.apply(lambda x: date_locale(year + x, "pl_PL.utf8", "%Y %d %b"))  # type: ignore
+    d2 = date_locale(dates + ' ' + year, "en_GB.utf8", "%d %b %Y")  # 24 Feb 2023
+    d3 = date_locale(year + ' ' + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
+    d4 = date_locale(year + ' ' + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
 
     d1 = d1.fillna(d2)
     d1 = d1.fillna(d3)
     d1 = d1.fillna(d4)
     d1 = d1.fillna(" ")
-    return d1.dt.date
+    return d1
 
 
-def split_groups(data: pd.DataFrame, grp: str) -> pd.DataFrame:
+def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
     # extract 'grp' rows from 'data' DataFrame
     # if no groups, search for apendix
     grpNameRows = data.iloc[:, 1] == data.iloc[:, 2]

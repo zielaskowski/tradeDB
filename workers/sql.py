@@ -1,7 +1,7 @@
 import os
 import re
 import sqlite3
-from datetime import date
+from datetime import datetime as dt
 from typing import Dict, List
 
 import pandas as pd
@@ -27,12 +27,12 @@ Args:
 """
 
 
-SQL_file = "./assets/sql_scheme.json"
+SQL_file = "./assets/sql_scheme.jsonc"
 CURR_file = "./assets/currencies.csv"
 
 
-def get_indexes(
-    db_file: str, tab: str, sector: str, symbol: str, from_date: str, end_date: str
+def query(
+    db_file: str, region: str, symbol: str, from_date: dt, end_date: dt
 ) -> Dict:
     """get data from sql db about index
     (from tabs: INDEXES, INDEXES_DESC, GEO)
@@ -61,8 +61,28 @@ def get_indexes(
                 WHERE name LIKE '{symbol}'
                 AND sector LIKE '{sector}'""",
     ]
-    resp = execute_sql(cmd, db_file)
+    resp = __execute_sql__(cmd, db_file)
     return resp
+
+
+def get_component(db_file: str, search: str) -> list:
+    """
+    Return components of given sysmbol.
+    Limit components to given table only
+    """
+    cmd = """SELECT
+                s.symbol
+            FROM
+                STOCK_DESC s
+            INNER JOIN INDEXES_DESC i ON i.hash=c.indexes_hash
+            INNER JOIN COMPONENTS c on s.hash = c.stock_hash
+                WHERE i.symbol LIKE 'WIG20'
+        """
+    resp = __execute_sql__([cmd], db_file=db_file)
+    if not resp:
+        return []
+    else:
+        return resp[cmd]['symbol'].to_list()
 
 
 def tab_exists(tab: str) -> bool:
@@ -94,22 +114,32 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
 
     for t in tabL:
         sql_columns = tab_columns(t, db_file)
-        resp = write_table(
+        resp = __write_table__(
             dat=dat.loc[:, [c in sql_columns for c in dat.columns]],
             tab=t,
             db_file=db_file,
         )
+        if not resp:
+            return resp
 
     ####
     # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
     ####
-    if resp:
-        print("Data stored in sql.")
+    if "indexes" in dat.columns:
+        hash = get(
+            db_file=db_file,
+            tab="INDEXES_DESC",
+            get="hash",
+            search=[dat.loc[0, "indexes"]],
+            cols=["symbol"],
+        )["symbol"].iloc[0, 0]
+        components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
+        resp = __write_table__(dat=components, tab="COMPONENTS", db_file=db_file)
 
     return resp
 
 
-def write_table(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.DataFrame]:
+def __write_table__(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.DataFrame]:
     """writes DataFrame to SQL table 'tab'"""
     records = list(dat.astype("string").to_records(index=False))
     cmd = [
@@ -118,7 +148,7 @@ def write_table(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.DataF
         """
         for values_list in records
     ]
-    return execute_sql(cmd, db_file)
+    return __execute_sql__(cmd, db_file)
 
 
 def get(
@@ -140,8 +170,8 @@ def get(
     else:
         cols = [c.lower() for c in cols]
     if get not in all_cols:
-        print(f"Not correct get={get} argument.")
-        print(f"possible options: {cols}")
+        print(f"Not correct get='{get}' argument.")
+        print(f"possible options: {all_cols}")
         return {}
 
     # check if tab exists!
@@ -155,7 +185,7 @@ def get(
         part_cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
         cmd += [part_cmd]
 
-    resp = execute_sql(cmd, db_file)
+    resp = __execute_sql__(cmd, db_file)
     # rename resp keys to column name
     resp = {cols[cmd.index(c)]: resp[c] for c in cmd}
     return resp
@@ -164,7 +194,7 @@ def get(
 def tab_columns(tab: str, db_file: str) -> List[str]:
     """return list of columns for table"""
     sql_cmd = [f"pragma table_info({tab})"]
-    resp = execute_sql(sql_cmd, db_file)[sql_cmd[0]]
+    resp = __execute_sql__(sql_cmd, db_file)[sql_cmd[0]]
     if "name" not in list(resp):
         # table dosen't exists
         return []
@@ -173,7 +203,8 @@ def tab_columns(tab: str, db_file: str) -> List[str]:
 
 def check_sql(db_file: str) -> bool:
     """Check db file if aligned with scheme written in sql_scheme.json.
-    Check if table exists and if has the required columns
+    Check if table exists and if has the required columns.
+    Creates one if necessery
 
     Args:
         db_file (str): file location
@@ -181,10 +212,14 @@ def check_sql(db_file: str) -> bool:
     Returns:
         bool: True if correct file, False otherway
     """
+    # make sure if exists
     if not os.path.isfile(db_file):
         print(f"DB file '{db_file}' is missing.")
-        return False
+        print(f"Creating new DB: {db_file}")
+        __create_sql__(db_file=db_file)
+        return True
 
+    # check if correct sql
     sql_scheme = read_json(SQL_file)
     for i in range(len(sql_scheme)):
         tab = list(sql_scheme.keys())[i]
@@ -196,7 +231,7 @@ def check_sql(db_file: str) -> bool:
     return True
 
 
-def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
+def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
     """Execute provided SQL commands.
     If db returns anything write as dict {command: respose as pd.DataFrame}
 
@@ -244,7 +279,7 @@ def execute_sql(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
         con.close()
 
 
-def create_sql(db_file: str) -> bool:
+def __create_sql__(db_file: str) -> bool:
     """Creates sql query based on sql_scheme.json and send to db.
     Perform check if created DB is aligned with scheme from sql.json file.
     add GEO tab
@@ -275,7 +310,7 @@ def create_sql(db_file: str) -> bool:
         sql_cmd.append(tab_cmd)
     # last command to check if all tables were created
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
-    status = execute_sql(sql_cmd, db_file)
+    status = __execute_sql__(sql_cmd, db_file)
 
     if status == {} or status[sql_cmd[-1]]["tbl_name"].to_list() != list(
         sql_scheme.keys()
@@ -287,7 +322,7 @@ def create_sql(db_file: str) -> bool:
 
     # write GEO info
     print("writing GEO info to db...")
-    status = write_table(__geo_tab__(), tab="GEO", db_file=db_file)
+    status = __write_table__(__geo_tab__(), tab="GEO", db_file=db_file)
     if not status:
         print("Problem with GEO data")
         return False
@@ -318,7 +353,7 @@ def __geo_tab__() -> pd.DataFrame:
     geo = geo[
         ["iso2", "country", "iso2_region", "region", "currency", "code", "numeric_code"]
     ]
-    geo["last_upd"] = date.today()
+    geo["last_upd"] = dt.today()
     geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")
     geo.fillna("", inplace=True)
     # add 'unknown' just in case
