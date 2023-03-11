@@ -1,0 +1,54 @@
+{
+	"Nagłówki żądania (1,021 KB)": {
+		"headers": [
+			{
+				"name": "Accept",
+				"value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+			},
+			{
+				"name": "Accept-Encoding",
+				"value": "gzip, deflate, br"
+			},
+			{
+				"name": "Accept-Language",
+				"value": "pl,en-US;q=0.7,en;q=0.3"
+			},
+			{
+				"name": "Connection",
+				"value": "keep-alive"
+			},
+			{
+				"name": "Cookie",
+				"value": "SSESS2787c022b848024a04c728ced4ce147b=fMtwJW-4zo2FKxeq6S4oKnwU7d6lq84n-ONsXG0iruM; wcsid=XAj0Lf5TsHsiTl8O2g2JT0N0Ao2BO1T0; hblid=s4z8KUXtlccuXJDx2g2JT0N0AB2AJ1o0; _oklv=1658091752648%2CXAj0Lf5TsHsiTl8O2g2JT0N0Ao2BO1T0; _okdetect=%7B%22token%22%3A%2216580917527970%22%2C%22proto%22%3A%22about%3A%22%2C%22host%22%3A%22%22%7D; olfsk=olfsk41970612983349076; _okbk=cd4%3Dtrue%2Cvi5%3D0%2Cvi4%3D1658091753147%2Cvi3%3Dactive%2Cvi2%3Dfalse%2Cvi1%3Dfalse%2Ccd8%3Dchat%2Ccd6%3D0%2Ccd5%3Daway%2Ccd3%3Dfalse%2Ccd2%3D0%2Ccd1%3D0%2C; _ok=9254-298-10-2422; cookie-agreed=C0000%2CC0002%2CC0003"
+			},
+			{
+				"name": "Host",
+				"value": "www.youinvest.co.uk"
+			},
+			{
+				"name": "Sec-Fetch-Dest",
+				"value": "document"
+			},
+			{
+				"name": "Sec-Fetch-Mode",
+				"value": "navigate"
+			},
+			{
+				"name": "Sec-Fetch-Site",
+				"value": "none"
+			},
+			{
+				"name": "Sec-Fetch-User",
+				"value": "?1"
+			},
+			{
+				"name": "Upgrade-Insecure-Requests",
+				"value": "1"
+			},
+			{
+				"name": "User-Agent",
+				"value": "Mozilla/5.0 (X11; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0"
+			}
+		]
+	}
+}

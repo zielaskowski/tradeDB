@@ -1,0 +1,16 @@
+{
+    "US_global": [551, "Global Sectors"],
+    "US_sectors": [551, "U.S. Sectors"],
+    "US_smallcap": [551, "U.S. Sectors SmallCap"],
+    "UK_global": [607, "Global Sectors"],
+    "UK_sectors": [607, "U.S. Sectors"],
+    "US_ETFs_asia": [552, "Asia"],
+    "US_ETFs_europe": [552, "Europe"],
+    "US_ETFs_america": [552, "America"],
+    "US_ETFs_middle-east": [552, "Middle East"],
+    "US_ETFs_africa": [552, "Africa"],
+    "UK_ETFs_asia": [587, "Asia"],
+    "UK_ETFs_europe": [587, "Europe"],
+    "UK_ETFs_america": [587, "America"],
+    "UK_ETFs_middle-east": [587, "Middle East"]
+}

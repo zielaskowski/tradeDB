@@ -1,0 +1,108 @@
+{
+  //** column names with lower case
+  //** data ONLY upper case, with exception for 'info'
+  "GEO":
+    //**https://wbdata.readthedocs.io/en/stable/
+    {
+      "iso2": "TEXT PRIMARY KEY",
+      "country": "TEXT",
+      "iso2_region": "TEXT",
+      "region": "TEXT",
+      "currency": "TEXT",
+      "currency_code": "TEXT",
+      "currency_digit": "INTEGER",
+      "last_upd": "DATE NOT NULL"
+    },
+
+  "INDEXES_DESC": {
+    //**INDEX is reserved keyword
+    "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'INDEXES'
+    "symbol": "TEXT",
+    "name": "TEXT",
+    "country": "TEXT",
+    "industry": "TEXT",
+    "info": "TEXT",
+    "from_date": "DATE NOT NULL",
+    "to_date": "DATE NOT NULL",
+    "FOREIGN": [{ "country": "GEO(iso2)" }]
+  },
+
+  "INDEXES": {
+    "hash": "TEXT",
+    "val": "INTEGER",
+    "date": "DATE NOT NULL",
+    "FOREIGN": [{ "hash": "INDEXES_DESC(hash)" }]
+  },
+  "ETF_DESC": {
+    "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
+    "symbol": "TEXT",
+    "name": "TEXT",
+    "components": "TEXT",
+    "country": "TEXT",
+    "industry": "TEXT",
+    "info": "TEXT",
+    "from_date": "DATE NOT NULL",
+    "to_date": "DATE NOT NULL",
+    "FOREIGN": [{ "country": "GEO(iso2)" }]
+  },
+  "ETF": {
+    "hash": "TEXT",
+    "vol": "INTEGER",
+    "val": "INTEGER",
+    "date": "DATE NOT NULL",
+    "FOREIGN": [{ "hash": "ETF_DESC(hash)" }]
+  },
+  "COMODITIES_DESC": {
+    "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
+    "symbol": "TEXT",
+    "name": "TEXT",
+    "sector": "TEXT",
+    "info": "TEXT",
+    "from_date": "DATE NOT NULL",
+    "to_date": "DATE NOT NULL"
+  },
+  "COMODITIES": {
+    "hash": "TEXT",
+    "vol": "INTEGER",
+    "val": "INTEGER",
+    "date": "DATE NOT NULL",
+    "FOREIGN": [{ "hash": "COMODITIES_DESC(hash)" }]
+  },
+
+  "STOCK": {
+    "hash": "TEXT",
+    "vol": "INTEGER",
+    "val": "INTEGER",
+    "date": "DATE NOT NULL",
+    "FOREIGN": [{ "hash": "STOCK_DESC(hash)" }]
+  },
+
+  "STOCK_DESC": {
+    "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'STOCK'
+    "symbol": "TEXT",
+    "name": "TEXT",
+    "country": "TEXT",
+    "industry": "TEXT",
+    "info": "TEXT",
+    "from_date": "DATE NOT NULL",
+    "to_date": "DATE NOT NULL",
+    "FOREIGN": [{ "country": "GEO(iso2)" }]
+  },
+  "COMPONENTS": {
+    //** connection between indexes and stock
+    //** one stock can be in more  then one index
+    "indexes_hash": "TEXT",
+    "stock_hash": "TEXT",
+    "FOREIGN": [
+      { "indexes_hash": "INDEXES_DESC(hash)" },
+      { "stock_hash": "STOCK_DESC(hash)" }
+    ]
+  },
+  //** all prices in SQL are written in USD, so we need relation to USD only
+  "CURRENCY": {
+    "iso2": "TEXT",
+    "toUSD": "INTEGER",
+    "date": "DATE NOT NULL",
+    "FOREIGN": [{ "iso2": "GEO(iso2)" }]
+  }
+}
