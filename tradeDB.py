@@ -69,48 +69,41 @@ class Trader:
         except Exception as err:
             sys.exit(str(err))
 
-    def __check_region__(self, tab: str, region: str) -> str:
+    def __check_arg__(self,
+                      arg: str,
+                      arg_name: str,
+                      opts: List,
+                      strict=False) -> str:
         """
-        check sector against GEO table with wild char (region.*)
-        if missing, possibly we want to read from web based on indexes.jsonc
-        Regions there are slightly different
+        check argumnt against possible values
+        Display info if missing or argument in within opts
+        pass check if arg equal "%"
+        if strict = False, search all matching by adding *
+        Returns "" if checks  fail or arg itself if all ok
         """
-        if region == "%":
-            return region
-        regions = [
-            r
-            for r in self.SECTORS[tab]["data"]
-            if re.search(f"^{region}.*", r, re.IGNORECASE) is not None
-        ]
-        if not regions:
-            regions = list(self.SECTORS[tab]["data"].keys())  # type: ignore
-
-        # if ambiguous region: inform
-        if len(region) > 1:
-            print(f"Ambiguous region name '{region}'.")
-            print("Possible matches:")
-            [print(s) for s in region]
+        if arg == "%":
+            return arg
+        arg = arg.upper()
+        # make sure the opts are unique (region can have doubles)
+        opts = list(set(opts))
+        if not arg:
+            print(f"Missing argument '{arg_name}'")
+            print(f"Possible values are: {opts}")
             return ""
-
-        # if no match
-        if not regions:
-            print(f"unknown region: {region}")
-            print("Existing regions are:")
-            print(
-                [
-                    r["region"]  # type: ignore
-                    for r in sql.get(
-                        db_file=self.db,
-                        tab="GEO",
-                        get="region",
-                        search=["%"],
-                        cols=["region"],
-                    )
-                ]
-            )
+        if not strict:
+            r = re.compile(arg+'.*$')
+        else:
+            r = re.compile(arg + '$')
+        match = list(filter(r.match, opts))
+        if not match:
+            print(f"Wrong argument '{arg_name}' value: {arg}.")
+            print(f"Possible values are: {opts}")
             return ""
-
-        return regions[0]
+        if len(match) > 1:
+            print(f"Ambiguous '{arg_name}' value: '{arg}'.")
+            print(f"Possible matches: {match}")
+            return ""
+        return match[0]
 
     def get(self, **kwargs) -> pd.DataFrame:
         """get requested data from db or from web if missing in db
@@ -132,32 +125,58 @@ class Trader:
         ##################
 
         # sql file location
-        if "db_file" in kwargs.keys():
-            self.db = kwargs["db_file"]
+        self.db = kwargs.get("db_file", self.db)
 
         # sql table
-        tab = kwargs.get("tab", "")
-        if not tab:
-            print("Missing argument 'from'. Use -help for more info.")
-            print(f"Possible tables are: {list(self.SECTORS.keys())}")
+        if not (tab := self.__check_arg__(
+            arg=kwargs.get("tab", ""),
+            arg_name="tab",
+            opts=list(self.SECTORS.keys())
+        )
+        ):
             return pd.DataFrame([""])
 
         # filter region
-        region = kwargs.get("region", "%")
-        region = self.__check_region__(tab=tab, region=region)
-        if not region:
+        opts = list(self.SECTORS[tab]["data"].keys())  # type: ignore
+        opts += sql.get(db_file=self.db,
+                        tab='GEO',
+                        get=['region'],
+                        search=['%'],
+                        cols=['region'])['region']['region'].to_list()
+        if not (region := self.__check_arg__(
+                arg=kwargs.get("region", "%"),
+                arg_name="region",
+                opts=opts)):
+            return pd.DataFrame([""])
+
+        # filter countries
+        opts = sql.get(db_file=self.db,
+                       tab='GEO',
+                       get=['iso2'],
+                       search=['%'],
+                       cols=['iso2'])['iso2']['iso2'].to_list()
+        opts += sql.get(db_file=self.db,
+                        tab='GEO',
+                        get=['country'],
+                        search=['%'],
+                        cols=['country'])['country']['country'].to_list()
+        if not (country := self.__check_arg__(
+            arg=kwargs.get("country", "%"),
+            arg_name='country',
+            opts=opts
+        )):
             return pd.DataFrame([""])
 
         # components
-        component = kwargs.get("component", "%")
-        all_components = sql.get(
-            db_file=self.db, tab="INDEXES", get="symbol", search=["%"], cols=["symbol"]
-        )["symbol"]
-
-        if component != "%" and component not in all_components:
-            print(f"Unknown component symbol: {component}")
-            print(f"Available components in {tab} are:")
-            print(all_components)
+        if not (component := self.__check_arg__(
+            arg=kwargs.get("component", "%"),
+            arg_name='components',
+            opts=sql.get(
+                db_file=self.db,
+                tab="INDEXES_DESC",
+                get=["symbol"],
+                search=["%"],
+                cols=["symbol"])["symbol"]["symbol"].to_list())):
             return pd.DataFrame([""])
 
         # symbol
@@ -178,13 +197,20 @@ class Trader:
 
         dat = sql.query(
             db_file=self.db,
+            tab=tab,
             region=region,
+            country=country,
+            component=component,
             symbol=symbol + "%",
             from_date=from_date,
             end_date=end_date,
         )
-        if not dat:
-            api = self.SECTORS["INDEXES"]["data"][region]["api"]  # type: ignore
+        if dat:
+            # convert currency
+            pass
+        else:
+            # download from web
+            api = self.SECTORS["INDEXES"]["data"][region]["api"]
             dat = api_stooq.get(
                 sector_id=api["id"],  # type: ignore
                 sector_grp=api["group"],  # type: ignore
@@ -194,7 +220,7 @@ class Trader:
             dat = self.__describe_table__(
                 dat=dat,
                 tab="INDEXES",
-                description=self.SECTORS["INDEXES"]["data"][region]["description"],  # type: ignore
+                description=self.SECTORS["INDEXES"]["data"][region]["description"],
             )
             resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
             if not resp:
@@ -253,14 +279,16 @@ class Trader:
             for h in dat["hash"]:
                 date_sql = sql.get(
                     tab + "_DESC",
-                    get=col,
+                    get=[col],
                     search=[h],
                     cols=["hash"],
                     db_file=self.db,
                 )["hash"].iloc[0, 0]
                 HASHrows = dat["hash"] == h
                 if date_sql:
-                    minmax_date += [func(dat.loc[HASHrows, "date"].to_list() + [date_sql])]  # type: ignore
+                    # type: ignore
+                    minmax_date += [func(dat.loc[HASHrows,
+                                         "date"].to_list() + [date_sql])]  # type: ignore
                 else:
                     minmax_date += [func(dat.loc[HASHrows, "date"])]
             return minmax_date
@@ -291,9 +319,10 @@ class Trader:
         names = names.apply(lambda x: re.sub(r"WIG.*$", x + r" - POLAND", x))
         names = names.apply(lambda x: re.sub(r"ATX.*$", r"ATX - AUSTRIA", x))
 
-        countries = sql.get(tab="GEO", get="country", search=["%"], db_file=self.db)[
-            "country"
-        ]["country"]
+        countries = sql.get(tab="GEO",
+                            get=["country"],
+                            search=["%"],
+                            db_file=self.db)["country"]["country"]
 
         split = [re.split(" - ", n) for n in names]
         name_short = [s[0] for s in split]
@@ -309,12 +338,17 @@ class Trader:
                 name_country.append("null")
 
         # simplify countries - special cases
-        name_country = [re.sub("SOUTH KOREA", "KOREA, REP.", c) for c in name_country]
-        name_country = [re.sub("SLOVAKIA", "SLOVAK REPUBLIC", c) for c in name_country]
-        name_country = [re.sub("SWISS", "SWITZERLAND", c) for c in name_country]
+        name_country = [re.sub("SOUTH KOREA", "KOREA, REP.", c)
+                        for c in name_country]
+        name_country = [re.sub("SLOVAKIA", "SLOVAK REPUBLIC", c)
+                        for c in name_country]
+        name_country = [re.sub("SWISS", "SWITZERLAND", c)
+                        for c in name_country]
         name_country = [re.sub("TURKEY", "TURKIYE", c) for c in name_country]
-        name_country = [re.sub("U\\.S\\.", "UNITED STATES", c) for c in name_country]
-        name_country = [re.sub("RUSSIA", "RUSSIAN FEDERATION", c) for c in name_country]
+        name_country = [re.sub("U\\.S\\.", "UNITED STATES", c)
+                        for c in name_country]
+        name_country = [re.sub("RUSSIA", "RUSSIAN FEDERATION", c)
+                        for c in name_country]
 
         match = [re.search(c, r"-".join(countries)) for c in name_country]
         # handle what not found
@@ -327,7 +361,7 @@ class Trader:
         resp = [
             sql.get(
                 tab="GEO",
-                get="iso2",
+                get=["iso2"],
                 search=[n + "%"],
                 cols=["country"],
                 db_file=self.db,

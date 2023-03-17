@@ -32,7 +32,14 @@ CURR_file = "./assets/currencies.csv"
 
 
 def query(
-    db_file: str, region: str, symbol: str, from_date: dt, end_date: dt
+    db_file: str,
+    tab:str,
+    region: str,
+    country: str,
+    component: str,
+    symbol: str,
+    from_date: dt,
+    end_date: dt
 ) -> Dict:
     """get data from sql db about index
     (from tabs: INDEXES, INDEXES_DESC, GEO)
@@ -59,7 +66,7 @@ def query(
                 """,
         f"""SELECT * FROM {tab}_DESC
                 WHERE name LIKE '{symbol}'
-                AND sector LIKE '{sector}'""",
+                AND sector LIKE '{region}'""",
     ]
     resp = __execute_sql__(cmd, db_file)
     return resp
@@ -103,7 +110,8 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
     if not tab_exists(tab):
         return {}
     # all data shall be in capital letters!
-    dat = dat.apply(lambda x: x.str.upper() if isinstance(x, str) else x)  # type: ignore
+    dat = dat.apply(lambda x: x.str.upper() if isinstance(
+        x, str) else x)  # type: ignore
 
     sql_scheme = read_json(SQL_file)
     if tab + "_DESC" in sql_scheme.keys():
@@ -129,12 +137,14 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
         hash = get(
             db_file=db_file,
             tab="INDEXES_DESC",
-            get="hash",
+            get=["hash"],
             search=[dat.loc[0, "indexes"]],
             cols=["symbol"],
         )["symbol"].iloc[0, 0]
-        components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
-        resp = __write_table__(dat=components, tab="COMPONENTS", db_file=db_file)
+        components = pd.DataFrame(
+            {"stock_hash": dat["hash"], "indexes_hash": hash})
+        resp = __write_table__(
+            dat=components, tab="COMPONENTS", db_file=db_file)
 
     return resp
 
@@ -152,9 +162,13 @@ def __write_table__(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.D
 
 
 def get(
-    tab: str, get: str, search: list, db_file: str, cols=["all"]
+    tab: str, get: list, search: list, db_file: str, cols=["%"]
 ) -> Dict[str, pd.DataFrame]:
     """get info from table
+    return as Dict:
+    - each key for column searched,
+    - value as DataFrame with columns selected by get
+    return only unique values
 
     Args:
         tab: table to search
@@ -162,14 +176,15 @@ def get(
         search: what to get (use '*' for everything)
         cols: columns used for searching
     """
-    get = get.lower()
     all_cols = tab_columns(tab=tab, db_file=db_file)
     search = [s.upper() for s in search]
-    if cols[0].lower() == "all":
+    get = [g.lower() for g in get]
+    cols = [c.lower() for c in cols]
+    if cols[0] == "%":
         cols = all_cols
-    else:
-        cols = [c.lower() for c in cols]
-    if get not in all_cols:
+    if get[0] == '%':
+        get = all_cols
+    if not all(g in all_cols for g in get):
         print(f"Not correct get='{get}' argument.")
         print(f"possible options: {all_cols}")
         return {}
@@ -180,14 +195,15 @@ def get(
 
     cmd = []
     for c in cols:
-        part_cmd = f"SELECT {get} FROM {tab} WHERE "
+        part_cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
         part_cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search])
         part_cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
         cmd += [part_cmd]
 
     resp = __execute_sql__(cmd, db_file)
     # rename resp keys to column name
-    resp = {cols[cmd.index(c)]: resp[c] for c in cmd}
+    resp = {cols[cmd.index(c)]: resp[c].drop_duplicates()
+            for c in cmd}
     return resp
 
 
@@ -255,7 +271,6 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
         )
         cur = con.cursor()
         for cmd in script:
-            print(cmd)
             cur.execute(cmd)
             a = cur.fetchall()
             if a:
@@ -341,17 +356,21 @@ def __geo_tab__() -> pd.DataFrame:
         for c in wb.search_countries(".*")
         if c["region"]["value"] != "Aggregates"
     ]
-    con = pd.DataFrame(countries, columns=["iso2", "country", "iso2_region", "region"])
+    con = pd.DataFrame(countries, columns=[
+                       "iso2", "country", "iso2_region", "region"])
     con = con.apply(lambda x: x.str.upper())
+    con = con.apply(lambda x: x.str.strip())
 
     cur = pd.read_csv(CURR_file)
     cur = cur.loc[cur["withdrawal_date"].isna(), :]
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\\s*\(", ", ", x))
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
 
-    geo = con.merge(right=cur, how="left", left_on="country", right_on="Entity")
+    geo = con.merge(right=cur, how="left",
+                    left_on="country", right_on="Entity")
     geo = geo[
-        ["iso2", "country", "iso2_region", "region", "currency", "code", "numeric_code"]
+        ["iso2", "country", "iso2_region", "region",
+            "currency", "code", "numeric_code"]
     ]
     geo["last_upd"] = dt.today()
     geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")

@@ -9,6 +9,6 @@ def main(**kwargs):
 
 
 main(tab="STOCK")
-main(tab="STOCK", sector="nyse")
+main(tab="STOCK", component="nyse")
 main(tab="INDEXES")
-main(tab="INDEXES", sector="east asia")
+main(tab="INDEXES", region="east asia")
