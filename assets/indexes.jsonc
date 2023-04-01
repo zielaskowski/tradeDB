@@ -26,23 +26,23 @@
   },
   "U.S. Main": {
     "api": { "id": 549, "group": "Main" },
-    "description": {"country":"UNITED STATES"}
+    "description": {"country":"US"}
   },
   "U.S. Sector": {
     "api": { "id": 549, "group": "Sector" },
-    "description": {"country":"UNITED STATES"}
+    "description": {"country":"US"}
   },
   "U.S. Volatility": {
     "api": { "id": 549, "group": "Volatility" },
-    "description": {"country":"UNITED STATES"}
+    "description": {"country":"US"}
   },
   "U.S. Comodity": {
     "api": { "id": 549, "group": "Commodity" },
-    "description": {"country":"UNITED STATES"}
+    "description": {"country":"US"}
   },
   "U.S. Other": {
     "api": { "id": 549, "group": "Other" },
-    "description": {"country":"UNITED STATES"}
+    "description": {"country":"US"}
   },
   "LATIN AMERICA & CARIBBEAN": {
     "api": { "id": 526, "group": "-U.S.;-CANADA" },

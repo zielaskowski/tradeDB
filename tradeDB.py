@@ -3,11 +3,11 @@ import os
 import re
 import sys
 from datetime import datetime as dt
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Union
 
 import pandas as pd
 
-from workers import api_stooq, sql
+from workers import api, sql
 from workers.common import read_json
 
 """manages getting stock data
@@ -30,7 +30,7 @@ class Trader:
             "INDEXES": {"file": "./assets/indexes.jsonc"},
             "STOCK": {"file": "./assets/stock.jsonc"},
             "ETF": {"file": "./assets/etf.jsonc"},
-            "COMODITIES": {"file": "./assets/comodities.jsonc"},
+            "COMODITIES": {"file": "./assets/comodities.jsonc"}
         }
         self.__read_sectors()
         # database location
@@ -49,52 +49,96 @@ class Trader:
         if not sql.check_sql(self.db):
             # populate indexes
             ##################
-            print("writing INDEX info to db...")
-            [
-                self.get(tab="INDEXES", region=region)
-                for region in self.SECTORS["INDEXES"]["data"]
-            ]
+            self.__initiate_sql__()
 
-            [
-                self.get(tab="STOCK", component=index)
-                for index in self.get(tab="INDEXES", symbol="%")
-            ]
+    def __initiate_sql__(self):
+        print("writing INDEX info to db...")
+        for key, region in self.SECTORS["INDEXES"]["data"].items():  # type: ignore
+            print(f"...downloading indexes for {key}")
+            dat = api.stooq(
+                sector_id=region["api"]["id"],  # type: ignore
+                sector_grp=region["api"]["group"],  # type: ignore
+                from_date=dt.today(),
+                end_date=dt.today(),
+            )
+            dat = self.__describe_table__(
+                dat=dat,
+                tab='INDEXES',
+                description=region["description"],  # type: ignore
+            )
+            resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
+            if not resp:
+                sys.exit(f"FATAL: wrong data for {region}")
+            for s, c in dat.loc[:, ["symbol", "country"]].to_records(index=False):
+                datComp = api.stooq(
+                    component=s,
+                    from_date=dt.today(),
+                    end_date=dt.today(),
+                )
+                datComp = self.__describe_table__(
+                    dat=datComp,
+                    tab='STOCK',
+                    description={'indexes': s, 'country': c}
+                )
+                resp = sql.put(dat=datComp, tab='STOCK', db_file=self.db)
 
     def __read_sectors(self) -> None:
         try:
             for k in self.SECTORS:
                 self.SECTORS[k]["data"] = read_json(  # type: ignore
-                    self.SECTORS[k]["file"]
-                )
+                    self.SECTORS[k]["file"])
         except Exception as err:
             sys.exit(str(err))
 
     def __check_arg__(self,
                       arg: str,
                       arg_name: str,
-                      opts: List,
+                      opts: Union[List, str],
+                      tab='',
+                      opts_direct=False,
                       strict=False) -> str:
         """
         check argumnt against possible values
         Display info if missing or argument in within opts
         pass check if arg equal "%"
-        if strict = False, search all matching by adding *
+        Args:
+            arg: arg value
+            arg_name: arg name
+            opts: list of col names with possible options, or list of options
+            tab: table where to search for opts
+            opts_direct: opts given directly as list of options
+            strict = False, search all matching by adding *
         Returns "" if checks  fail or arg itself if all ok
         """
         if arg == "%":
             return arg
-        arg = arg.upper()
-        # make sure the opts are unique (region can have doubles)
-        opts = list(set(opts))
         if not arg:
             print(f"Missing argument '{arg_name}'")
             print(f"Possible values are: {opts}")
             return ""
+        arg = arg.upper()
+
+        # collect options
+        if not opts_direct:
+            cols = opts
+            opts = []
+            for col in cols:
+                opts += sql.get(db_file=self.db,
+                                tab=tab,
+                                get=[col],
+                                search=['%'],
+                                cols=[col]
+                                )[col][col].to_list()
+        # make sure the opts are unique
+        opts = list(set(opts))
+
         if not strict:
             r = re.compile(arg+'.*$')
         else:
             r = re.compile(arg + '$')
         match = list(filter(r.match, opts))
+        if arg in match:  # if we have direct match whatever strict arg is
+            match = [arg]
         if not match:
             print(f"Wrong argument '{arg_name}' value: {arg}.")
             print(f"Possible values are: {opts}")
@@ -115,7 +159,7 @@ class Trader:
             [components]: list all components of INDEXES
             [country]: filter results by iso2 of country
             [currency]: by defoult return in USD
-            symbol: symbol name, if no direct match, will search symbol
+            [symbol]: symbol name, if no direct match, will search symbol
                     in all names from table: symbol%.
                     If none given will return all available for 'from' table
             start: start date for search
@@ -129,135 +173,138 @@ class Trader:
 
         # sql table
         if not (tab := self.__check_arg__(
-            arg=kwargs.get("tab", ""),
-            arg_name="tab",
-            opts=list(self.SECTORS.keys())
-        )
-        ):
-            return pd.DataFrame([""])
-
-        # filter region
-        opts = list(self.SECTORS[tab]["data"].keys())  # type: ignore
-        opts += sql.get(db_file=self.db,
-                        tab='GEO',
-                        get=['region'],
-                        search=['%'],
-                        cols=['region'])['region']['region'].to_list()
-        if not (region := self.__check_arg__(
-                arg=kwargs.get("region", "%"),
-                arg_name="region",
-                opts=opts)):
-            return pd.DataFrame([""])
-
-        # filter countries
-        opts = sql.get(db_file=self.db,
-                       tab='GEO',
-                       get=['iso2'],
-                       search=['%'],
-                       cols=['iso2'])['iso2']['iso2'].to_list()
-        opts += sql.get(db_file=self.db,
-                        tab='GEO',
-                        get=['country'],
-                        search=['%'],
-                        cols=['country'])['country']['country'].to_list()
-        if not (country := self.__check_arg__(
-            arg=kwargs.get("country", "%"),
-            arg_name='country',
-            opts=opts
-        )):
-            return pd.DataFrame([""])
-
-        # components
-        if not (component := self.__check_arg__(
-            arg=kwargs.get("component", "%"),
-            arg_name='components',
-            opts=sql.get(
-                db_file=self.db,
-                tab="INDEXES_DESC",
-                get=["symbol"],
-                search=["%"],
-                cols=["symbol"])["symbol"]["symbol"].to_list())):
+                arg=kwargs.get("tab", ""),
+                arg_name="tab",
+                opts=list(self.SECTORS.keys()),
+                opts_direct=True)):
             return pd.DataFrame([""])
 
         # symbol
-        symbol = kwargs.get("symbol", "")
+        symbol = [kwargs.get("symbol", "%")]
 
-        # COMBINATIONS LOGIC
-        if tab != "STOCK" and component != "%":
-            print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
-            component = "%"
-        # no filters
-        if not symbol and component == "%" and region == "%":
-            print("Missing arguments. Provide at last one argument")
+        # components
+        if symbol[0] == '%':
+            if not (component := self.__check_arg__(
+                    arg=kwargs.get("component", "%"),
+                    arg_name='components',
+                    opts=['name'],
+                    tab='INDEXES_DESC')):
+                return pd.DataFrame([""])
+            if component != '%':
+                if tab != "STOCK":
+                    print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
+                else:
+                    symbol = sql.get_from_component(db_file=self.db,
+                                                    search=component)
+
+        # filter countries
+        if symbol[0] == '%':
+            if not (country := self.__check_arg__(
+                arg=kwargs.get("country", "%"),
+                arg_name='country',
+                opts=['iso2', 'country'],
+                tab='GEO'
+            )):
+                return pd.DataFrame([""])
+            if country != '%':
+                symbol = sql.get_from_geo(db_file=self.db,
+                                          tab=tab,
+                                          search=country,
+                                          what='country')
+
+        # filter region
+        if symbol[0] == '%':
+            if not (region := self.__check_arg__(
+                    arg=kwargs.get("region", "%"),
+                    arg_name="region",
+                    opts=['region'],
+                    tab='GEO')):
+                return pd.DataFrame([""])
+            if region != '%':
+                symbol = sql.get_from_geo(db_file=self.db,
+                                          tab=tab,
+                                          search=region,
+                                          what='region')
+
+        # currency
+        if not (currency := self.__check_arg__(
+            arg=kwargs.get('currency', '%'),
+            arg_name='currency',
+            opts=['currency_code'],
+            tab='GEO'
+        )):
             return pd.DataFrame([""])
 
         # dates
-        from_date = kwargs.get("start", dt.today())
-        end_date = kwargs.get("end", dt.today())
+        from_date = kwargs.get("start", "")
+        to_date = kwargs.get("end", "")
 
         dat = sql.query(
             db_file=self.db,
             tab=tab,
-            region=region,
-            country=country,
-            component=component,
-            symbol=symbol + "%",
+            symbol=symbol,
             from_date=from_date,
-            end_date=end_date,
+            to_date=to_date,
         )
-        if dat:
-            # convert currency
-            pass
-        else:
+        if dat.empty:
             # download from web
-            api = self.SECTORS["INDEXES"]["data"][region]["api"]
-            dat = api_stooq.get(
-                sector_id=api["id"],  # type: ignore
-                sector_grp=api["group"],  # type: ignore
-                from_date=from_date,
-                end_date=end_date,
-            )
-            dat = self.__describe_table__(
-                dat=dat,
-                tab="INDEXES",
-                description=self.SECTORS["INDEXES"]["data"][region]["description"],
-            )
-            resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
-            if not resp:
-                sys.exit(f"FATAL: wrong data for {region}")
-            # write info on components
-            # with STOOCK data
-            ###############
-            for s, c in dat.loc[:, ["symbol", "country"]].to_records(index=False):
-                datComp = api_stooq.get(
-                    components=s,
-                    from_date=dt.today(),
-                    end_date=dt.today(),
+            symbol = [symbol]
+            for s in symbol:
+                dat = api.stooq(
+                    symbol=s,
+                    from_date=from_date,
+                    end_date=to_date,
                 )
-                if datComp.empty:
-                    continue
-                datComp = self.__describe_table__(
-                    dat=datComp,
-                    tab="STOCK",
-                    description={"country": c, "indexes": s},
+                dat = self.__describe_table__(
+                    dat=dat,
+                    tab=tab,
+                    description={},
                 )
-                resp = sql.put(dat=datComp, tab="STOCK", db_file=self.db)
+                resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
                 if not resp:
-                    sys.exit(f"FATAL: wrong info for {s}")
+                    sys.exit(
+                        f"FATAL: wrong data for {region}{symbol}{component}")
+
+        if currency != '%':
+            self.convert_currency(dat, currency)
         return dat
+
+    def convert_currency(self, dat, currency):
+
+        # get currency
+        symbol = sql.get(tab='GEO',
+                         get=['currency_code'],
+                         search=[country],
+                         cols=['iso2'],
+                         db_file=self.db)['iso2']['iso2'][0]
+        cur_dat = api.ecb(from_date=from_date,
+                          end_date=to_date,
+                          symbol=symbol)
+        cur_dat = self.__describe_table__(dat=cur_dat,
+                                          tab='CURRENCY',
+                                          description={'iso2': symbol})
+        resp_cur = sql.put(
+            dat=cur_dat, tab='CURRENCY', db_file=self.db)
+        if not resp_cur:
+            sys.exit("FATAL: wrong data for CURRENCY")
+        pass
 
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict
     ) -> pd.DataFrame:
         if dat.empty:
             return dat
+        if tab == 'CURRENCY':
+            dat['iso2'] = description['iso2']
+            return dat
+
         # extract countries
         ######
         if "country" not in description.keys():
             # for indexes, country is within name
             dat["name"], dat["country"] = self.__country_txt__(dat["name"])
         else:
-            dat["country"] = description["country"]
+            dat["country"] = description['country']
 
         # hash table
         ######
@@ -295,8 +342,6 @@ class Trader:
 
         dat["from_date"] = minmax(min, dat)
         dat["to_date"] = minmax(max, dat)
-        # convert currency (if not INDEX)
-        #####
 
         # get info on components
         ######

@@ -5,10 +5,12 @@ from tradeDB import Trader
 
 def main(**kwargs):
     akcje = Trader()
-    akcje.get(**kwargs)
+    return akcje.get(**kwargs)
 
-
-main(tab="STOCK")
-main(tab="STOCK", component="nyse")
-main(tab="INDEXES")
-main(tab="INDEXES", region="east asia")
+main()
+print(main(tab="STOCK"))
+print(main(tab="STOCK", component="s&p 500"))
+print(main(tab="INDEXES"))
+print(main(tab="INDEXES", region="east asia"))
+print(main(tab="STOCK", component="wig20"))
+print(main(tab='STOCK',region='east asia',currency='pln'))

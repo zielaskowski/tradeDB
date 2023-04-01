@@ -2,7 +2,7 @@ import os
 import re
 import sqlite3
 from datetime import datetime as dt
-from typing import Dict, List
+from typing import Dict, List, Union
 
 import pandas as pd
 import wbdata as wb
@@ -10,20 +10,7 @@ import wbdata as wb
 from workers.common import read_json
 
 """manages SQL db.
-By defoult the db is stooq.sqlite in app directory, will create if missing
-DB structure is described in ./asstes/sql.json
-
-Args:
-    db_file: force to use different db, will create if missing
-    from: table to read from [INDEXES, COMODITIES, STOCK, ETF]
-    sector: each table is divided into sectors
-            (countries, continents or industry)
-            may help navigating, not
-    symbol: symbol name, if no direct match, will search symbol
-            in all names from table: symbol%.
-            If none given will return all available for 'from' table
-    start: start date for search
-    end: end date for search
+DB structure is described in ./asstes/sql_scheme.json
 """
 
 
@@ -33,14 +20,12 @@ CURR_file = "./assets/currencies.csv"
 
 def query(
     db_file: str,
-    tab:str,
-    region: str,
-    country: str,
-    component: str,
-    symbol: str,
-    from_date: dt,
-    end_date: dt
-) -> Dict:
+    tab: str,
+    symbol: List[str],
+    from_date: Union[str, dt],
+    to_date: Union[str, dt],
+    columns=[]
+) -> pd.DataFrame:
     """get data from sql db about index
     (from tabs: INDEXES, INDEXES_DESC, GEO)
     may also translate currency
@@ -50,43 +35,76 @@ def query(
     Args:
         db_file: db file
         tab: table in sql
-        sector: group in table
         symbol: symbol from table:
-        from_date: start date of data (including)
-        end_date: last date of data (including)
+        from_date: start date of data (including). if missing take only last date
+        to_date: last date of data (including)
     """
     if not check_sql(db_file):
-        return {}
+        return pd.DataFrame([""])
 
-    cmd = [
-        f"""SELECT * FROM {tab}
-                WHERE name LIKE '{symbol}'
-                AND strftime('%s',date) BETWEEN
-                    strftime('%s',{from_date}) AND strftime('%s',{end_date})
-                """,
-        f"""SELECT * FROM {tab}_DESC
-                WHERE name LIKE '{symbol}'
-                AND sector LIKE '{region}'""",
-    ]
-    resp = __execute_sql__(cmd, db_file)
-    return resp
+    # get tab columns (omit hash)
+    if not columns:
+        columns = [c for c in tab_columns(tab, db_file)+tab_columns(tab+'_DESC', db_file)
+                   if c not in ['hash']]
+    columns_txt = ','.join(set(columns))
+
+    cmd = f"""SELECT {columns_txt}
+	        FROM {tab}_DESC
+            INNER JOIN {tab} ON {tab}.hash={tab}_DESC.hash
+	        WHERE """
+    cmd += "".join([tab+"_DESC.symbol LIKE '"+s+"' OR " for s in symbol])
+    cmd += tab+"_DESC.symbol LIKE 'none' "  # just to finish last OR
+
+    if not to_date:
+        cmd += """AND date=to_date"""
+    else:
+        cmd += f"""AND strftime('%s',date) BETWEEN
+                    strftime('%s','{from_date}') AND strftime('%s','{to_date}')
+                """
+
+    resp = __execute_sql__([cmd], db_file)
+    if resp:
+        return resp[cmd]
+    else:
+        return pd.DataFrame([""])
 
 
-def get_component(db_file: str, search: str) -> list:
+def get_from_geo(db_file: str, tab: str, search: str, what: str) -> list:
     """
-    Return components of given sysmbol.
+    Return symbol from country/region.
+    Limit components to given table only
+    Args:
+        what: which column to match
+    """
+    cmd = f"""SELECT
+                s.symbol
+            FROM
+                {tab}_DESC s
+            INNER JOIN GEO g ON s.country=g.iso2
+                WHERE g.{what} LIKE '{search}'
+        """
+    resp = __execute_sql__([cmd], db_file=db_file)
+    if not resp:
+        return []
+    else:
+        return resp[cmd]['symbol'].to_list()
+
+
+def get_from_component(db_file: str, search: str) -> list:
+    """
+    Return components of given symbol.
     Limit components to given table only
     """
-    cmd = """SELECT
+    cmd = f"""SELECT
                 s.symbol
             FROM
                 STOCK_DESC s
             INNER JOIN INDEXES_DESC i ON i.hash=c.indexes_hash
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
-                WHERE i.symbol LIKE 'WIG20'
+                WHERE i.name LIKE '{search}'
         """
     resp = __execute_sql__([cmd], db_file=db_file)
-    if not resp:
+    if resp[cmd].empty:
         return []
     else:
         return resp[cmd]['symbol'].to_list()
@@ -109,9 +127,11 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
     # check if tab exists!
     if not tab_exists(tab):
         return {}
+    if dat.empty:
+        return {}
     # all data shall be in capital letters!
-    dat = dat.apply(lambda x: x.str.upper() if isinstance(
-        x, str) else x)  # type: ignore
+    dat = dat.apply(lambda x: x.str.upper()  # type: ignore
+                    if isinstance(x, str) else x)
 
     sql_scheme = read_json(SQL_file)
     if tab + "_DESC" in sql_scheme.keys():
@@ -146,7 +166,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
         resp = __write_table__(
             dat=components, tab="COMPONENTS", db_file=db_file)
 
-    return resp
+    return resp  # type: ignore
 
 
 def __write_table__(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.DataFrame]:
@@ -227,13 +247,14 @@ def check_sql(db_file: str) -> bool:
 
     Returns:
         bool: True if correct file, False otherway
+        (but before creates file and GEO table)
     """
     # make sure if exists
     if not os.path.isfile(db_file):
         print(f"DB file '{db_file}' is missing.")
         print(f"Creating new DB: {db_file}")
         __create_sql__(db_file=db_file)
-        return True
+        return False
 
     # check if correct sql
     sql_scheme = read_json(SQL_file)
@@ -271,6 +292,7 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
         )
         cur = con.cursor()
         for cmd in script:
+            # print(cmd)  # DEBUG
             cur.execute(cmd)
             a = cur.fetchall()
             if a:

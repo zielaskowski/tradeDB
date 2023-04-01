@@ -2,16 +2,21 @@ import locale
 import re
 from contextlib import contextmanager
 from datetime import datetime as dt
+from datetime import timedelta
+import pytz
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import pandasdmx as sdmx
 import requests as rq
 from bs4 import BeautifulSoup as bs
 
 from workers.common import get_cookie
 
-"""download data from www.stooq.com
-called only when missing info in local db
+"""function to manage apis:
+    - stooq: not really an API, but web scrapping
+    - ECB, with usage of pandasSDMX library
 """
 
 
@@ -19,48 +24,108 @@ STOOQ_COOKIE = "./assets/header_stooq.jsonc"
 cookie = get_cookie(STOOQ_COOKIE)
 
 
-def get(
+def stooq(
     from_date: dt,
     end_date: dt,
     sector_id=0,
     sector_grp="",
     symbol="",
-    components="",
+    component=""
 ) -> pd.DataFrame:
     """
+    Get data from stooq web page
     Args:
         [sector_id]: group id for web API
         [sector_grp]: some tables are divided into groups
+        (when sector given, ignore dates, used only to initiate data)
         symbol: symbol name
         from_date: start date for search, is ignored for sector search
         end_date: end date for search, is ignored for sector search
     """
+    # convert dates
+    from_dateS, end_dateS = __str_date__(from_date, end_date)
 
-    if sector_id and not symbol:  # indexes
-        url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1"
+    if sector_id:  # indexes
+        url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d=from_dateS"
         # n: long/short names
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
         # u: show/hide if change empty (not rated today)
-        data = __take_page__(url)
+        data = __scrap_stooq__(url)
         if sector_grp != "":
             data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
-        url = f"https://stooq.com/q/?s={symbol}"
-        data = __take_page__(url)
-
-    elif components:  # if components included, download components
-        url = f"https://stooq.com/q/i/?s={components}&l=%page%&i"
-        data = __take_page__(url)
+        url = f"https://stooq.com/q/d/?s={symbol}&d1={from_dateS}&d2={end_dateS}&l=%page%"
+        data = __scrap_stooq__(url)
+    elif component:
+        url = f"https://stooq.com/q/i/?s={component}&l=%page%"
+        data = __scrap_stooq__(url)
 
     return data
 
 
-def __take_page__(url: str) -> pd.DataFrame:
+def ecb(from_date: dt,
+        end_date: dt,
+        symbol="",
+        ) -> pd.DataFrame:
+    """takes data from European Central Bank.
+    use pandas SDMX module
+    currency denominator is EUR 
+    (there is no all pairs available, so use EUR as base for other conversions)
+    Available dimensions in DB
+    <Dimension FREQ>,
+    <Dimension CURRENCY>,
+    <Dimension CURRENCY_DENOM>,
+    <Dimension EXR_TYPE>,
+    <Dimension EXR_SUFFIX>,
+    <TimeDimension TIME_PERIOD>
+    """
+    ecb = sdmx.Request('ECB')
+
+    # available symbols
+    exrDSD = ecb.dataflow('EXR').dataflow.EXR.structure
+    exrCMP = exrDSD.dimensions.components
+    all_symbols = sdmx.to_pandas(
+        exrCMP[1].local_repesentation.enumerated).index.to_list()
+    if symbol not in all_symbols:
+        print(f"Unknonw symbol: '{symbol}'")
+        return pd.DataFrame([""])
+    
+    key = '.'.join(['D', symbol, '', '', ''])
+    params = {'startPeriod': dt.strftime(from_date, '%Y-%m-%d'),
+              'endPeriod': dt.strftime(end_date, '%Y-%m-%d')}
+    datEXR = ecb.data('EXR', key=key, params=params)
+    dat = sdmx.to_pandas(datEXR).reset_index()
+
+    # df cleaning
+    dat['TIME_PERIOD'] = pd.to_datetime(dat['TIME_PERIOD'])
+    dat.rename(column={'TIME_PERIOD': 'date',
+                       'value': 'val'}, inplace=True)
+    return dat.loc[:, ['date', 'val']]
+
+
+def __str_date__(from_date: dt, end_date: dt) -> Tuple[str, str]:
+    # convert date to MST and substract one day
+    # this way we can be sure all stocks are already closed
+    # end we got day closed values from web
+    from_date = from_date.astimezone(pytz.timezone('Canada/Mountain'))
+    # trick to move to previous bizday
+    # trnsform to Tu=0 to Mo=6
+    from_date -= timedelta(max(1, (from_date.weekday()+6) % 7 - 3))
+    from_dateS = dt.strftime(from_date, '%Y%m%d')
+    end_date = end_date.astimezone(pytz.timezone('Canada/Mountain'))
+    if end_date > from_date:
+        end_date = from_date
+    end_dateS = dt.strftime(end_date, '%Y%m%d')
+    return (from_dateS, end_dateS)
+
+
+def __scrap_stooq__(url: str) -> pd.DataFrame:
     data = pd.DataFrame()
     for i in range(1, 100):
-        resp = rq.get(url=re.sub("%page%", str(i), url).lower(), headers=cookie)
+        resp = rq.get(url=re.sub("%page%", str(i),
+                      url).lower(), headers=cookie)
 
         if resp.status_code != 200:
             break
@@ -81,11 +146,12 @@ def __take_page__(url: str) -> pd.DataFrame:
         pdTab.rename(str.lower, axis="columns", inplace=True)
         # rename polish to english
         pdTab.rename(
-            columns={"nazwa": "name", "kurs": "val", "data": "date", "wolumen": "vol"},
+            columns={"nazwa": "name", "kurs": "val",
+                     "data": "date", "wolumen": "vol"},
             inplace=True,
         )
-        # rename columns (Last->val),
-        pdTab.rename(columns={"last": "val"}, inplace=True)
+        # rename columns (Last->val or Close->val),
+        pdTab.rename(columns={"last": "val", 'close': 'val'}, inplace=True)
         # convert dates
         pdTab["date"] = __convert_date__(pdTab["date"])
 
@@ -109,13 +175,15 @@ def __convert_date__(dates: pd.Series) -> pd.Series:
 
     year = dt.today().strftime("%Y")
     d1 = pd.to_datetime(dates, errors="coerce")  # hh:ss
-    d2 = date_locale(dates + ' ' + year, "en_GB.utf8", "%d %b %Y")  # 24 Feb 2023
+    d2 = date_locale(dates + ' ' + year, "en_GB.utf8",
+                     "%d %b %Y")  # 24 Feb 2023
     d3 = date_locale(year + ' ' + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
     d4 = date_locale(year + ' ' + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
 
     d1 = d1.fillna(d2)
     d1 = d1.fillna(d3)
     d1 = d1.fillna(d4)
+    d1 = d1.dt.date
     d1 = d1.fillna(" ")
     return d1
 
@@ -130,7 +198,8 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
         grps = grp.split(";")
         for i, g in enumerate(grps):
             if g[0] == "-":
-                grps[i] = "^(?!.*" + g[1:] + "$).*$"  # i.e. '^(?!.*CANADA$).*$'
+                # i.e. '^(?!.*CANADA$).*$'
+                grps[i] = "^(?!.*" + g[1:] + "$).*$"
             else:
                 grps[i] = ".*" + g + "$"  # i.e. '.*CANADA$'
         grp_rows = [
@@ -140,13 +209,14 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
         data = data.loc[grp_rows, :]
     else:
         start = list(map(lambda x: x + 1, grpName.index.to_list()))
-        end = list(map(lambda x: x - 1, grpName.index.to_list()))  # shift by one
+        # shift by one
+        end = list(map(lambda x: x - 1, grpName.index.to_list()))
         end.append(len(data))
 
         grpName["Start"] = start
         grpName["End"] = end[1:]
         grpRow = grpName.loc[:, "name"] == grp
         data = data.loc[
-            grpName["Start"].values[grpRow][0] : grpName["End"].values[grpRow][0], :
+            grpName["Start"].values[grpRow][0]: grpName["End"].values[grpRow][0], :
         ]
     return data

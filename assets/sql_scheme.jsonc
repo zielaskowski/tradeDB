@@ -98,7 +98,7 @@
       { "stock_hash": "STOCK_DESC(hash)" }
     ]
   },
-  //** all prices in SQL are written in USD, so we need relation to USD only
+  //** all prices in SQL are written local currency
   "CURRENCY": {
     "iso2": "TEXT",
     "toUSD": "INTEGER",
