@@ -159,6 +159,7 @@ class Trader:
             [components]: list all components of INDEXES
             [country]: filter results by iso2 of country
             [currency]: by defoult return in USD
+            [name]: name of ticker
             [symbol]: symbol name, if no direct match, will search symbol
                     in all names from table: symbol%.
                     If none given will return all available for 'from' table
@@ -180,7 +181,30 @@ class Trader:
             return pd.DataFrame([""])
 
         # symbol
-        symbol = [kwargs.get("symbol", "%")]
+        if not (symbol := self.__check_arg__(
+                arg=kwargs.get("symbol", "%"),
+                arg_name='symbol',
+                opts=['symbol'],
+                tab=tab
+            )):
+                return pd.DataFrame([""])
+        symbol = [symbol]
+
+        # name
+        if symbol[0] == '%':
+            if not (name := self.__check_arg__(
+                    arg=kwargs.get("name", "%"),
+                    arg_name='name',
+                    opts=['name'],
+                    tab=tab
+                )):
+                    return pd.DataFrame([""])
+            if name != '%':
+                symbol = sql.get(db_file=self.db,
+                                get=['symbol'],
+                                search=[name],
+                                cols=['name']
+                                )['name']['symbol'].to_list()
 
         # components
         if symbol[0] == '%':
@@ -236,9 +260,29 @@ class Trader:
             return pd.DataFrame([""])
 
         # dates
-        from_date = kwargs.get("start", "")
-        to_date = kwargs.get("end", "")
+        from_date = kwargs.get("start", dt.today())
+        to_date = kwargs.get("end", dt.today())
 
+        # download missing data
+        # assume all symbols are already in sql db
+        min_date = min(sql.get(tab=tab+'_DESC',
+            get=['from_date'],
+            search=symbol,
+            cols=['symbol']
+            )['symbol']['from_date'])
+        max_date=max(sql.get(tab=tab+'_DESC',
+            get=['to_date'],
+            search=symbol,
+            cols=['symbol']
+            )['symbol']['to_date'])
+        if min_date > from_date or max_date < to_date:
+            for s in symbol:
+                dat = api.stooq(from_date=min_date, end_date=max_date,symbol=s)
+                dat = self.__describe_table__(dat=dat,tab=tab,description={})
+                resp = sql.put(dat=dat, tab=tab, db_file=self.db)
+                if not resp:
+                    sys.exit(
+                        f"FATAL: wrong data for {region}{symbol}{component}")
         dat = sql.query(
             db_file=self.db,
             tab=tab,
@@ -246,48 +290,49 @@ class Trader:
             from_date=from_date,
             to_date=to_date,
         )
-        if dat.empty:
-            # download from web
-            symbol = [symbol]
-            for s in symbol:
-                dat = api.stooq(
-                    symbol=s,
-                    from_date=from_date,
-                    end_date=to_date,
-                )
-                dat = self.__describe_table__(
-                    dat=dat,
-                    tab=tab,
-                    description={},
-                )
-                resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
-                if not resp:
-                    sys.exit(
-                        f"FATAL: wrong data for {region}{symbol}{component}")
 
         if currency != '%':
             self.convert_currency(dat, currency)
         return dat
 
     def convert_currency(self, dat, currency):
+        # download missing data
+        # assume all symbols are already in sql db
+        min_date = min(sql.get(tab=tab+'_DESC',
+            get=['from_date'],
+            search=symbol,
+            cols=['symbol']
+            )['symbol']['from_date'])
+        max_date=max(sql.get(tab=tab+'_DESC',
+            get=['to_date'],
+            search=symbol,
+            cols=['symbol']
+            )['symbol']['to_date'])
+        if min_date > from_date or max_date < to_date:
+            for s in symbol:
+                dat = api.stooq(from_date=min_date, end_date=max_date,symbol=s)
+                dat = self.__describe_table__(dat=dat,tab=tab,description={})
+                resp = sql.put(dat=dat, tab=tab, db_file=self.db)
+                if not resp:
+                    sys.exit(
+                        f"FATAL: wrong data for {region}{symbol}{component}")
+        
+        country_from = list(set(dat['country']))
+        from_date = min(dat['from_date'])
+        to_date = max(dat['to_date'])
 
-        # get currency
-        symbol = sql.get(tab='GEO',
-                         get=['currency_code'],
-                         search=[country],
-                         cols=['iso2'],
-                         db_file=self.db)['iso2']['iso2'][0]
-        cur_dat = api.ecb(from_date=from_date,
-                          end_date=to_date,
-                          symbol=symbol)
-        cur_dat = self.__describe_table__(dat=cur_dat,
-                                          tab='CURRENCY',
-                                          description={'iso2': symbol})
-        resp_cur = sql.put(
-            dat=cur_dat, tab='CURRENCY', db_file=self.db)
-        if not resp_cur:
-            sys.exit("FATAL: wrong data for CURRENCY")
-        pass
+        for c in country_from:
+            country_to = sql.get(tab='GEO',
+                            get=['currency_code'],
+                            search=[country],
+                            cols=['iso2'],
+                            db_file=self.db)['iso2']['iso2'][0]
+            cur_dat = api.ecb(from_date=from_date,
+                            end_date=to_date,
+                            symbol=symbol)
+            cur_dat = self.__describe_table__(dat=cur_dat,
+                                            tab='CURRENCY',
+                                            description={'iso2': symbol})
 
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict
