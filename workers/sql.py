@@ -285,6 +285,7 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
             {} in case of failure
     """
     ans = {}
+    cmd=''
     # Foreign key constraints are disabled by default,
     # so must be enabled separately for each database connection.
     script = ["PRAGMA foreign_keys = ON"] + script
@@ -314,8 +315,8 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
         print(err)
         return {}
     finally:
-        cur.close()
-        con.close()
+        cur.close() # type: ignore
+        con.close() # type: ignore
 
 
 def __create_sql__(db_file: str) -> bool:

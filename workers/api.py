@@ -42,6 +42,7 @@ def stooq(
         from_date: start date for search, is ignored for sector search
         end_date: end date for search, is ignored for sector search
     """
+    data = pd.DataFrame([''])
     # convert dates
     from_dateS, end_dateS = __str_date__(from_date, end_date)
 
