@@ -3,12 +3,13 @@ import os
 import re
 import sys
 from datetime import datetime as dt
+from datetime import date
 from typing import Callable, List, Tuple, Union
 
 import pandas as pd
 
 from workers import api, sql
-from workers.common import read_json
+from workers.common import read_json, biz_date
 
 """manages getting stock data
 use workers based on context
@@ -32,7 +33,7 @@ class Trader:
             "ETF": {"file": "./assets/etf.jsonc"},
             "COMODITIES": {"file": "./assets/comodities.jsonc"}
         }
-        self.__read_sectors()
+        self.__read_sectors__()
         # database location
         if not db:
             self.db = "./trader.sqlite"
@@ -53,13 +54,18 @@ class Trader:
 
     def __initiate_sql__(self):
         print("writing INDEX info to db...")
+
+        from_date = date.today(),
+        to_date = date.today(),
+        from_date, to_date = biz_date(from_date, to_date)
+
         for key, region in self.SECTORS["INDEXES"]["data"].items():  # type: ignore
             print(f"...downloading indexes for {key}")
             dat = api.stooq(
                 sector_id=region["api"]["id"],  # type: ignore
                 sector_grp=region["api"]["group"],  # type: ignore
-                from_date=dt.today(),
-                end_date=dt.today(),
+                from_date=from_date,
+                to_date=to_date,
             )
             dat = self.__describe_table__(
                 dat=dat,
@@ -72,8 +78,8 @@ class Trader:
             for s, c in dat.loc[:, ["symbol", "country"]].to_records(index=False):
                 datComp = api.stooq(
                     component=s,
-                    from_date=dt.today(),
-                    end_date=dt.today(),
+                    from_date=from_date,
+                    to_date=to_date,
                 )
                 datComp = self.__describe_table__(
                     dat=datComp,
@@ -82,7 +88,7 @@ class Trader:
                 )
                 resp = sql.put(dat=datComp, tab='STOCK', db_file=self.db)
 
-    def __read_sectors(self) -> None:
+    def __read_sectors__(self) -> None:
         try:
             for k in self.SECTORS:
                 self.SECTORS[k]["data"] = read_json(  # type: ignore
@@ -149,14 +155,17 @@ class Trader:
             return ""
         return match[0]
 
-    def get(self, **kwargs) -> pd.DataFrame:
+    def get(self, update=True, **kwargs) -> pd.DataFrame:
         """get requested data from db or from web if missing in db
 
         Args:
+            update: if True, will update the db
             db_file: force to use different db, will create if missing
             tab: table to read from [INDEXES, COMODITIES, STOCK, ETF]
         Symbol filters:
-        If many args given the first on below list will matter
+        check correctness of each filter and display available option if no match
+        or matching possibilities if ambigues
+        If many args given the last on below list will matter
         If none is given will list all symbols for table 'tab'
             [symbol]: symbol of the ticker, 
             [name]: name of ticker
@@ -170,9 +179,9 @@ class Trader:
         """
         # unpack arguments
         ##################
-
+        symbol = ['']
         # warn if we have overlaping arguments
-        args = [e for e in ['symbol','name','components','country','region'] 
+        args = [e for e in ['symbol', 'name', 'components', 'country', 'region']
                 if e in list(kwargs.keys())]
         if len(args) > 1:
             print(f"Overlaping arguments '{args}'.")
@@ -197,13 +206,7 @@ class Trader:
             tab=tab
         )):
             return pd.DataFrame([""])
-        if symbol == '%':
-            symbol = sql.get(db_file=self.db,
-                             tab=tab+'_DESC',
-                             get=['symbol'],
-                             search=[symbol],
-                             cols=['symbol']
-                             )['symbol']['symbol'].to_list()
+        symbol = [symbol]
 
         # name
         if not (name := self.__check_arg__(
@@ -272,46 +275,77 @@ class Trader:
             return pd.DataFrame([""])
 
         # dates
-        from_date = kwargs.get("start", dt.today())
-        to_date = kwargs.get("end", dt.today())
+        from_date = kwargs.get("start", date.today())
+        to_date = kwargs.get("end", date.today())
+        from_date, to_date = biz_date(from_date, to_date)
 
-        # download missing data
-        # assume all symbols are already in sql db
-        min_dates = sql.get(db_file=self.db,
-                            tab=tab+'_DESC',
-                            get=['from_date'],
-                            search=symbol,
-                            cols=['symbol']
-                            )['symbol']['from_date']
-        max_dates = sql.get(db_file=self.db,
-                            tab=tab+'_DESC',
-                            get=['to_date'],
-                            search=symbol,
-                            cols=['symbol']
-                            )['symbol']['to_date']
-        for s in symbol:
-            min_date = min(min_dates.loc[min_dates['symbol'] == s, :])
-            max_date = max(max_dates.loc[max_dates['symbol'] == s, :])
-            if min_date > from_date or max_date < to_date:
-                dat = api.stooq(from_date=min_date,
-                                end_date=max_date,
-                                symbol=s)
-                dat = self.__describe_table__(dat=dat, tab=tab, description={})
-                resp = sql.put(dat=dat, tab=tab, db_file=self.db)
-                if not resp:
-                    sys.exit(
-                        f"FATAL: wrong data for {region}{symbol}{component}")
-        dat = sql.query(
-            db_file=self.db,
-            tab=tab,
-            symbol=symbol,
-            from_date=from_date,
-            to_date=to_date,
-        )
+        # updates data to meet required dates
+        if update:
+            self.__update_date__(tab=tab,
+                                 symbol=symbol,
+                                 from_date=from_date,
+                                 to_date=to_date
+                                 )
+
+        dat = sql.query(db_file=self.db,
+                        tab=tab,
+                        symbol=symbol,
+                        from_date=from_date,
+                        to_date=to_date,
+                        )
 
         if currency != '%':
             self.convert_currency(dat, currency)
         return dat
+
+    def __update_date__(self,
+                        tab: str,
+                        symbol: list,
+                        from_date: date,
+                        to_date: date) -> None:
+        # download missing data
+        # assume all symbols are already in sql db
+        print("Updating data....")
+        min_dates = sql.get(db_file=self.db,
+                            tab=tab+'_DESC',
+                            get=['from_date', 'symbol'],
+                            search=symbol,
+                            cols=['symbol']
+                            )['symbol']
+        max_dates = sql.get(db_file=self.db,
+                            tab=tab+'_DESC',
+                            get=['to_date', 'symbol'],
+                            search=symbol,
+                            cols=['symbol']
+                            )['symbol']
+
+        symbolDF = sql.get(db_file=self.db,
+                           tab=tab+'_DESC',
+                           get=['symbol', 'name'],
+                           search=symbol,
+                           cols=['symbol']
+                           )['symbol']
+
+        for s, n in symbolDF.itertuples(index=False, name=None):
+            min_date = min(
+                min_dates.loc[min_dates['symbol'] == s, 'from_date'])  # type: ignore
+            max_date = max(
+                max_dates.loc[max_dates['symbol'] == s, 'to_date'])  # type: ignore
+            if min_date > from_date or max_date < to_date:  # type: ignore
+                print(n)  # DEBUG
+                dat = api.stooq(from_date=min(from_date, min_date),
+                                to_date=max(to_date, max_date),
+                                symbol=s)
+                dat = self.__describe_table__(dat=dat,
+                                              tab=tab,
+                                              description={'symbol': s,
+                                                           'name': n})
+                if dat.empty:
+                    continue
+                resp = sql.put(dat=dat, tab=tab, db_file=self.db)
+                if not resp:
+                    sys.exit(
+                        f"FATAL: wrong data for '{n}'")
 
     def convert_currency(self, dat, currency):
         # download missing data
@@ -329,7 +363,7 @@ class Trader:
         if min_date > from_date or max_date < to_date:
             for s in symbol:
                 dat = api.stooq(from_date=min_date,
-                                end_date=max_date, symbol=s)
+                                to_date=max_date, symbol=s)
                 dat = self.__describe_table__(dat=dat, tab=tab, description={})
                 resp = sql.put(dat=dat, tab=tab, db_file=self.db)
                 if not resp:
@@ -356,19 +390,25 @@ class Trader:
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict
     ) -> pd.DataFrame:
+
         if dat.empty:
             return dat
+
         if tab == 'CURRENCY':
             dat['iso2'] = description['iso2']
             return dat
 
         # extract countries
         ######
-        if "country" not in description.keys():
-            # for indexes, country is within name
+        # for indexes, country may be within name
+        if 'name' in dat.columns:
             dat["name"], dat["country"] = self.__country_txt__(dat["name"])
-        else:
-            dat["country"] = description['country']
+
+        # get info from description
+        # "country", "indexes", "name", "symbol"
+        ######
+        for k in description:
+            dat[k] = description[k]
 
         # hash table
         ######
@@ -406,11 +446,6 @@ class Trader:
 
         dat["from_date"] = minmax(min, dat)
         dat["to_date"] = minmax(max, dat)
-
-        # get info on components
-        ######
-        if "indexes" in description.keys() and tab in ["STOCK"]:
-            dat["indexes"] = description["indexes"]
 
         # get industry
         ######

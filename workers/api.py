@@ -2,9 +2,8 @@ import locale
 import re
 from contextlib import contextmanager
 from datetime import datetime as dt
-from datetime import timedelta
-import pytz
-from typing import Tuple
+from datetime import date
+from typing import Union
 
 import numpy as np
 import pandas as pd
@@ -12,7 +11,7 @@ import pandasdmx as sdmx
 import requests as rq
 from bs4 import BeautifulSoup as bs
 
-from workers.common import get_cookie
+from workers.common import get_cookie, biz_date
 
 """function to manage apis:
     - stooq: not really an API, but web scrapping
@@ -25,8 +24,8 @@ cookie = get_cookie(STOOQ_COOKIE)
 
 
 def stooq(
-    from_date: dt,
-    end_date: dt,
+    from_date: date,
+    to_date: date,
     sector_id=0,
     sector_grp="",
     symbol="",
@@ -44,7 +43,8 @@ def stooq(
     """
     data = pd.DataFrame([''])
     # convert dates
-    from_dateS, end_dateS = __str_date__(from_date, end_date)
+    to_dateS = dt.strftime(to_date, '%Y%m%d')  # type: ignore
+    from_dateS = dt.strftime(from_date, '%Y%m%d')  # type: ignore
 
     if sector_id:  # indexes
         url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d=from_dateS"
@@ -57,7 +57,7 @@ def stooq(
             data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
-        url = f"https://stooq.com/q/d/?s={symbol}&d1={from_dateS}&d2={end_dateS}&l=%page%"
+        url = f"https://stooq.com/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
         data = __scrap_stooq__(url)
     elif component:
         url = f"https://stooq.com/q/i/?s={component}&l=%page%"
@@ -92,7 +92,7 @@ def ecb(from_date: dt,
     if symbol not in all_symbols:
         print(f"Unknonw symbol: '{symbol}'")
         return pd.DataFrame([""])
-    
+
     key = '.'.join(['D', symbol, '', '', ''])
     params = {'startPeriod': dt.strftime(from_date, '%Y-%m-%d'),
               'endPeriod': dt.strftime(end_date, '%Y-%m-%d')}
@@ -104,22 +104,6 @@ def ecb(from_date: dt,
     dat.rename(column={'TIME_PERIOD': 'date',
                        'value': 'val'}, inplace=True)
     return dat.loc[:, ['date', 'val']]
-
-
-def __str_date__(from_date: dt, end_date: dt) -> Tuple[str, str]:
-    # convert date to MST and substract one day
-    # this way we can be sure all stocks are already closed
-    # end we got day closed values from web
-    from_date = from_date.astimezone(pytz.timezone('Canada/Mountain'))
-    # trick to move to previous bizday
-    # trnsform to Tu=0 to Mo=6
-    from_date -= timedelta(max(1, (from_date.weekday()+6) % 7 - 3))
-    from_dateS = dt.strftime(from_date, '%Y%m%d')
-    end_date = end_date.astimezone(pytz.timezone('Canada/Mountain'))
-    if end_date > from_date:
-        end_date = from_date
-    end_dateS = dt.strftime(end_date, '%Y%m%d')
-    return (from_dateS, end_dateS)
 
 
 def __scrap_stooq__(url: str) -> pd.DataFrame:

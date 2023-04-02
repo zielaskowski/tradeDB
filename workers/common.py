@@ -1,7 +1,9 @@
 import json
-from typing import Dict
+from typing import Dict, Union, Tuple
 import re
-from datetime import date
+from datetime import date, timedelta
+from datetime import datetime as dt
+import pytz
 
 
 def read_json(file: str) -> Dict:
@@ -44,3 +46,24 @@ def get_cookie(file: str) -> Dict:
     header["Cookie"] = cookStr
 
     return header
+
+
+def biz_date(from_date: Union[dt, date], to_date: Union[dt, date]) -> Tuple[date, date]:
+    # first, make sure dates are datetime
+    if isinstance(from_date, date):
+        from_date = dt(from_date.year, from_date.month, from_date.day)
+        to_date = dt(to_date.year, to_date.month, to_date.day+1)
+    
+    # convert date to MST and substract one day
+    # this way we can be sure all stocks are already closed
+    # end we got day closed values from web
+    from_date = from_date.astimezone(pytz.timezone('Canada/Mountain'))
+    
+    # trick to move to previous bizday
+    # trnsform such week is from Tu=0 to Mo=6
+    from_date -= timedelta(max(1, (from_date.weekday()+6) % 7 - 3))
+    to_date = to_date.astimezone(pytz.timezone('Canada/Mountain'))
+    if to_date > from_date:
+        to_date = from_date
+    
+    return (from_date.date(), to_date.date())

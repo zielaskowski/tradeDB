@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 from datetime import datetime as dt
+from datetime import date
 from typing import Dict, List, Union
 
 import pandas as pd
@@ -22,8 +23,8 @@ def query(
     db_file: str,
     tab: str,
     symbol: List[str],
-    from_date: Union[str, dt],
-    to_date: Union[str, dt],
+    from_date: Union[str, date],
+    to_date: Union[str, date],
     columns=[]
 ) -> pd.DataFrame:
     """get data from sql db about index

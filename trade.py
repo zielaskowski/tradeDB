@@ -3,17 +3,14 @@
 from tradeDB import Trader
 
 
-def main(**kwargs):
-    akcje = Trader()
-    return akcje.get(**kwargs)
+trader = Trader()
 
-main()
-print(main(tab="STOCK"))
-print(main(tab="STOCK", component="s&p 500 "))
-print(main(tab="STOCK", component="s&p 500"))
-print(main(tab="INDEXES"))
-print(main(tab="INDEXES", region="east asia"))
-print(main(tab="STOCK", component="wig20"))
-print(main(tab="STOCK", name="ALLEGRO"))
-print(main(tab="STOCK", name="pkn"))
-print(main(tab='STOCK',region='east asia',currency='pln'))
+print(trader.get(tab="STOCK"))
+print(trader.get(tab="STOCK", component="s&p 500 ", region='east asia'))
+print(trader.get(tab="STOCK", component="s&p 500"))
+print(trader.get(tab="INDEXES"))
+print(trader.get(tab="INDEXES", region="east asia"))
+print(trader.get(tab="STOCK", component="wig20"))
+print(trader.get(tab="STOCK", name="ALLEGRO"))
+print(trader.get(tab="STOCK", name="pkn"))
+print(trader.get(tab='STOCK', region='east asia', currency='pln'))
