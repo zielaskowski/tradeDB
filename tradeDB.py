@@ -155,19 +155,28 @@ class Trader:
         Args:
             db_file: force to use different db, will create if missing
             tab: table to read from [INDEXES, COMODITIES, STOCK, ETF]
-            [region]: region to filter
-            [components]: list all components of INDEXES
-            [country]: filter results by iso2 of country
-            [currency]: by defoult return in USD
+        Symbol filters:
+        If many args given the first on below list will matter
+        If none is given will list all symbols for table 'tab'
+            [symbol]: symbol of the ticker, 
             [name]: name of ticker
-            [symbol]: symbol name, if no direct match, will search symbol
-                    in all names from table: symbol%.
-                    If none given will return all available for 'from' table
+            [components]: list all components of given INDEXES (names)
+            [country]: filter results by iso2 of country
+            [region]: region to filter
+
+            [currency]: by defoult return in USD
             start: start date for search
             end: end date for search
         """
         # unpack arguments
         ##################
+
+        # warn if we have overlaping arguments
+        args = [e for e in ['symbol','name','components','country','region'] 
+                if e in list(kwargs.keys())]
+        if len(args) > 1:
+            print(f"Overlaping arguments '{args}'.")
+            print("The most broad will be used. See help")
 
         # sql file location
         self.db = kwargs.get("db_file", self.db)
@@ -182,73 +191,76 @@ class Trader:
 
         # symbol
         if not (symbol := self.__check_arg__(
-                arg=kwargs.get("symbol", "%"),
-                arg_name='symbol',
-                opts=['symbol'],
-                tab=tab
-            )):
-                return pd.DataFrame([""])
-        symbol = [symbol]
+            arg=kwargs.get("symbol", "%"),
+            arg_name='symbol',
+            opts=['symbol'],
+            tab=tab
+        )):
+            return pd.DataFrame([""])
+        if symbol == '%':
+            symbol = sql.get(db_file=self.db,
+                             tab=tab+'_DESC',
+                             get=['symbol'],
+                             search=[symbol],
+                             cols=['symbol']
+                             )['symbol']['symbol'].to_list()
 
         # name
-        if symbol[0] == '%':
-            if not (name := self.__check_arg__(
-                    arg=kwargs.get("name", "%"),
-                    arg_name='name',
-                    opts=['name'],
-                    tab=tab
-                )):
-                    return pd.DataFrame([""])
-            if name != '%':
-                symbol = sql.get(db_file=self.db,
-                                get=['symbol'],
-                                search=[name],
-                                cols=['name']
-                                )['name']['symbol'].to_list()
+        if not (name := self.__check_arg__(
+            arg=kwargs.get("name", "%"),
+            arg_name='name',
+            opts=['name'],
+            tab=tab
+        )):
+            return pd.DataFrame([""])
+        if name != '%':
+            symbol = sql.get(db_file=self.db,
+                             tab=tab+'_DESC',
+                             get=['symbol'],
+                             search=[name],
+                             cols=['name']
+                             )['name']['symbol'].to_list()
 
         # components
-        if symbol[0] == '%':
-            if not (component := self.__check_arg__(
-                    arg=kwargs.get("component", "%"),
-                    arg_name='components',
-                    opts=['name'],
-                    tab='INDEXES_DESC')):
-                return pd.DataFrame([""])
-            if component != '%':
-                if tab != "STOCK":
-                    print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
-                else:
-                    symbol = sql.get_from_component(db_file=self.db,
-                                                    search=component)
+        if not (component := self.__check_arg__(
+                arg=kwargs.get("component", "%"),
+                arg_name='components',
+                opts=['name'],
+                tab='INDEXES_DESC')):
+            return pd.DataFrame([""])
+        if component != '%':
+            if tab != "STOCK":
+                print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
+            else:
+                symbol = sql.get_from_component(db_file=self.db,
+                                                search=component)
 
         # filter countries
-        if symbol[0] == '%':
-            if not (country := self.__check_arg__(
-                arg=kwargs.get("country", "%"),
-                arg_name='country',
-                opts=['iso2', 'country'],
-                tab='GEO'
-            )):
-                return pd.DataFrame([""])
-            if country != '%':
-                symbol = sql.get_from_geo(db_file=self.db,
-                                          tab=tab,
-                                          search=country,
-                                          what='country')
+        if not (country := self.__check_arg__(
+            arg=kwargs.get("country", "%"),
+            arg_name='country',
+            opts=['iso2', 'country'],
+            tab='GEO'
+        )):
+            return pd.DataFrame([""])
+        if country != '%':
+            symbol = sql.get_from_geo(db_file=self.db,
+                                      tab=tab,
+                                      search=country,
+                                      what='country')
 
         # filter region
-        if symbol[0] == '%':
-            if not (region := self.__check_arg__(
-                    arg=kwargs.get("region", "%"),
-                    arg_name="region",
-                    opts=['region'],
-                    tab='GEO')):
-                return pd.DataFrame([""])
-            if region != '%':
-                symbol = sql.get_from_geo(db_file=self.db,
-                                          tab=tab,
-                                          search=region,
-                                          what='region')
+        if not (region := self.__check_arg__(
+                arg=kwargs.get("region", "%"),
+                arg_name="region",
+                opts=['region'],
+                tab='GEO')):
+            return pd.DataFrame([""])
+        if region != '%':
+            symbol = sql.get_from_geo(db_file=self.db,
+                                      tab=tab,
+                                      search=region,
+                                      what='region')
 
         # currency
         if not (currency := self.__check_arg__(
@@ -265,20 +277,26 @@ class Trader:
 
         # download missing data
         # assume all symbols are already in sql db
-        min_date = min(sql.get(tab=tab+'_DESC',
-            get=['from_date'],
-            search=symbol,
-            cols=['symbol']
-            )['symbol']['from_date'])
-        max_date=max(sql.get(tab=tab+'_DESC',
-            get=['to_date'],
-            search=symbol,
-            cols=['symbol']
-            )['symbol']['to_date'])
-        if min_date > from_date or max_date < to_date:
-            for s in symbol:
-                dat = api.stooq(from_date=min_date, end_date=max_date,symbol=s)
-                dat = self.__describe_table__(dat=dat,tab=tab,description={})
+        min_dates = sql.get(db_file=self.db,
+                            tab=tab+'_DESC',
+                            get=['from_date'],
+                            search=symbol,
+                            cols=['symbol']
+                            )['symbol']['from_date']
+        max_dates = sql.get(db_file=self.db,
+                            tab=tab+'_DESC',
+                            get=['to_date'],
+                            search=symbol,
+                            cols=['symbol']
+                            )['symbol']['to_date']
+        for s in symbol:
+            min_date = min(min_dates.loc[min_dates['symbol'] == s, :])
+            max_date = max(max_dates.loc[max_dates['symbol'] == s, :])
+            if min_date > from_date or max_date < to_date:
+                dat = api.stooq(from_date=min_date,
+                                end_date=max_date,
+                                symbol=s)
+                dat = self.__describe_table__(dat=dat, tab=tab, description={})
                 resp = sql.put(dat=dat, tab=tab, db_file=self.db)
                 if not resp:
                     sys.exit(
@@ -299,40 +317,41 @@ class Trader:
         # download missing data
         # assume all symbols are already in sql db
         min_date = min(sql.get(tab=tab+'_DESC',
-            get=['from_date'],
-            search=symbol,
-            cols=['symbol']
-            )['symbol']['from_date'])
-        max_date=max(sql.get(tab=tab+'_DESC',
-            get=['to_date'],
-            search=symbol,
-            cols=['symbol']
-            )['symbol']['to_date'])
+                               get=['from_date'],
+                               search=symbol,
+                               cols=['symbol']
+                               )['symbol']['from_date'])
+        max_date = max(sql.get(tab=tab+'_DESC',
+                               get=['to_date'],
+                               search=symbol,
+                               cols=['symbol']
+                               )['symbol']['to_date'])
         if min_date > from_date or max_date < to_date:
             for s in symbol:
-                dat = api.stooq(from_date=min_date, end_date=max_date,symbol=s)
-                dat = self.__describe_table__(dat=dat,tab=tab,description={})
+                dat = api.stooq(from_date=min_date,
+                                end_date=max_date, symbol=s)
+                dat = self.__describe_table__(dat=dat, tab=tab, description={})
                 resp = sql.put(dat=dat, tab=tab, db_file=self.db)
                 if not resp:
                     sys.exit(
                         f"FATAL: wrong data for {region}{symbol}{component}")
-        
+
         country_from = list(set(dat['country']))
         from_date = min(dat['from_date'])
         to_date = max(dat['to_date'])
 
         for c in country_from:
             country_to = sql.get(tab='GEO',
-                            get=['currency_code'],
-                            search=[country],
-                            cols=['iso2'],
-                            db_file=self.db)['iso2']['iso2'][0]
+                                 get=['currency_code'],
+                                 search=[country],
+                                 cols=['iso2'],
+                                 db_file=self.db)['iso2']['iso2'][0]
             cur_dat = api.ecb(from_date=from_date,
-                            end_date=to_date,
-                            symbol=symbol)
+                              end_date=to_date,
+                              symbol=symbol)
             cur_dat = self.__describe_table__(dat=cur_dat,
-                                            tab='CURRENCY',
-                                            description={'iso2': symbol})
+                                              tab='CURRENCY',
+                                              description={'iso2': symbol})
 
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict

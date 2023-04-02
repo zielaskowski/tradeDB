@@ -213,6 +213,8 @@ def get(
     if not tab_exists(tab):
         return {}
 
+    # TODO: split symbols int groups by 500 items
+    # there is 1000 limit on tree depth in SQLite
     cmd = []
     for c in cols:
         part_cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
