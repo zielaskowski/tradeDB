@@ -9,47 +9,107 @@
 //**            (minus is all without appendix, list of apendixes split with ';')]
 {
   "EAST ASIA & PACIFIC": {
-    "api": { "id": 524, "group": "" },
-    "description": {}
+    "api": {
+      "id": 524,
+      "group": ""
+    },
+    "description": {
+      "region": "EAST ASIA & PACIFIC"
+    }
   },
   "EUROPE & CENTRAL ASIA": {
-    "api": { "id": 525, "group": "" },
-    "description": {}
+    "api": {
+      "id": 525,
+      "group": ""
+    },
+    "description": {
+      "region": "EUROPE & CENTRAL ASIA"
+    }
   },
   "U.S.": {
-    "api": { "id": 526, "group": "U.S." },
-    "description": {}
+    "api": {
+      "id": 526,
+      "group": "U.S."
+    },
+    "description": {
+      "region": "NORTH AMERICA"
+    }
   },
   "CANADA": {
-    "api": { "id": 526, "group": "CANADA" },
-    "description": {}
+    "api": {
+      "id": 526,
+      "group": "CANADA"
+    },
+    "description": {
+      "region": "NORTH AMERICA"
+    }
   },
   "U.S. Main": {
-    "api": { "id": 549, "group": "Main" },
-    "description": {"country":"US"}
+    "api": {
+      "id": 549,
+      "group": "Main"
+    },
+    "description": {
+      "country": "US",
+      "region": "NORTH AMERICA"
+    }
   },
   "U.S. Sector": {
-    "api": { "id": 549, "group": "Sector" },
-    "description": {"country":"US"}
+    "api": {
+      "id": 549,
+      "group": "Sector"
+    },
+    "description": {
+      "country": "US",
+      "region": "NORTH AMERICA"
+    }
   },
   "U.S. Volatility": {
-    "api": { "id": 549, "group": "Volatility" },
-    "description": {"country":"US"}
+    "api": {
+      "id": 549,
+      "group": "Volatility"
+    },
+    "description": {
+      "country": "US",
+      "region": "NORTH AMERICA"
+    }
   },
   "U.S. Comodity": {
-    "api": { "id": 549, "group": "Commodity" },
-    "description": {"country":"US"}
+    "api": {
+      "id": 549,
+      "group": "Commodity"
+    },
+    "description": {
+      "country": "US",
+      "region": "NORTH AMERICA"
+    }
   },
   "U.S. Other": {
-    "api": { "id": 549, "group": "Other" },
-    "description": {"country":"US"}
+    "api": {
+      "id": 549,
+      "group": "Other"
+    },
+    "description": {
+      "country": "US",
+      "region": "NORTH AMERICA"
+    }
   },
   "LATIN AMERICA & CARIBBEAN": {
-    "api": { "id": 526, "group": "-U.S.;-CANADA" },
-    "description": {}
+    "api": {
+      "id": 526,
+      "group": "-U.S.;-CANADA"
+    },
+    "description": {
+      "region": "LATIN AMERICA & CARIBBEAN"
+    }
   },
   "MIDDLE EAST & NORTH AFRICA": {
-    "api": { "id": 510, "group": "Middle East" },
-    "description": {}
+    "api": {
+      "id": 510,
+      "group": "Middle East"
+    },
+    "description": {
+      "region": "MIDDLE EAST & NORTH AFRICA"
+    }
   }
 }

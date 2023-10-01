@@ -1,17 +1,26 @@
 import locale
 import re
+import sys
+import os
+import asyncio
+
 from contextlib import contextmanager
 from datetime import datetime as dt
 from datetime import date
-from typing import Union
+import time
+
+from PIL import Image
+import io
 
 import numpy as np
 import pandas as pd
 import pandasdmx as sdmx
 import requests as rq
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup as bs
+from playwright.async_api import async_playwright
 
-from workers.common import get_cookie, biz_date
+from workers.common import set_header
 
 """function to manage apis:
     - stooq: not really an API, but web scrapping
@@ -19,8 +28,8 @@ from workers.common import get_cookie, biz_date
 """
 
 
-STOOQ_COOKIE = "./assets/header_stooq.jsonc"
-cookie = get_cookie(STOOQ_COOKIE)
+STOOQ_HEADER = "./assets/header_stooq.jsonc"
+header = set_header(STOOQ_HEADER)
 
 
 def stooq(
@@ -29,7 +38,8 @@ def stooq(
     sector_id=0,
     sector_grp="",
     symbol="",
-    component=""
+    component="",
+    cache=False,
 ) -> pd.DataFrame:
     """
     Get data from stooq web page
@@ -41,13 +51,17 @@ def stooq(
         from_date: start date for search, is ignored for sector search
         end_date: end date for search, is ignored for sector search
     """
-    data = pd.DataFrame([''])
+    data = pd.DataFrame([""])
+    if cache:
+        cache_url = "http://webcache.googleusercontent.com/search?q=cache:"
+    else:
+        cache_url = ""
     # convert dates
-    to_dateS = dt.strftime(to_date, '%Y%m%d')  # type: ignore
-    from_dateS = dt.strftime(from_date, '%Y%m%d')  # type: ignore
+    to_dateS = dt.strftime(to_date, "%Y%m%d")  # type: ignore
+    from_dateS = dt.strftime(from_date, "%Y%m%d")  # type: ignore
 
     if sector_id:  # indexes
-        url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d=from_dateS"
+        url = f"https://stooq.pl/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d={from_dateS}"
         # n: long/short names
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
@@ -57,22 +71,23 @@ def stooq(
             data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
-        url = f"https://stooq.com/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
+        url = f"{cache_url}https://stooq.pl/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
         data = __scrap_stooq__(url)
     elif component:
-        url = f"https://stooq.com/q/i/?s={component}&l=%page%"
+        url = f"{cache_url}https://stooq.pl/q/i/?s={component}&l=%page%"
         data = __scrap_stooq__(url)
 
     return data
 
 
-def ecb(from_date: dt,
-        end_date: dt,
-        symbol="",
-        ) -> pd.DataFrame:
+def ecb(
+    from_date: dt,
+    end_date: dt,
+    symbol="",
+) -> pd.DataFrame:
     """takes data from European Central Bank.
     use pandas SDMX module
-    currency denominator is EUR 
+    currency denominator is EUR
     (there is no all pairs available, so use EUR as base for other conversions)
     Available dimensions in DB
     <Dimension FREQ>,
@@ -82,44 +97,152 @@ def ecb(from_date: dt,
     <Dimension EXR_SUFFIX>,
     <TimeDimension TIME_PERIOD>
     """
-    ecb = sdmx.Request('ECB')
+    ecb = sdmx.Request("ECB")
 
     # available symbols
-    exrDSD = ecb.dataflow('EXR').dataflow.EXR.structure
+    exrDSD = ecb.dataflow("EXR").dataflow.EXR.structure
     exrCMP = exrDSD.dimensions.components
     all_symbols = sdmx.to_pandas(
-        exrCMP[1].local_repesentation.enumerated).index.to_list()
+        exrCMP[1].local_repesentation.enumerated
+    ).index.to_list()
     if symbol not in all_symbols:
         print(f"Unknonw symbol: '{symbol}'")
         return pd.DataFrame([""])
 
-    key = '.'.join(['D', symbol, '', '', ''])
-    params = {'startPeriod': dt.strftime(from_date, '%Y-%m-%d'),
-              'endPeriod': dt.strftime(end_date, '%Y-%m-%d')}
-    datEXR = ecb.data('EXR', key=key, params=params)
+    key = ".".join(["D", symbol, "", "", ""])
+    params = {
+        "startPeriod": dt.strftime(from_date, "%Y-%m-%d"),
+        "endPeriod": dt.strftime(end_date, "%Y-%m-%d"),
+    }
+    datEXR = ecb.data("EXR", key=key, params=params)
     dat = sdmx.to_pandas(datEXR).reset_index()
 
     # df cleaning
-    dat['TIME_PERIOD'] = pd.to_datetime(dat['TIME_PERIOD'])
-    dat.rename(column={'TIME_PERIOD': 'date',
-                       'value': 'val'}, inplace=True)
-    return dat.loc[:, ['date', 'val']]
+    dat["TIME_PERIOD"] = pd.to_datetime(dat["TIME_PERIOD"])
+    dat.rename(column={"TIME_PERIOD": "date", "value": "val"}, inplace=True)
+    return dat.loc[:, ["date", "val"]]
+
+
+def __captcha__(page: bs) -> bool:
+    # check if we have captcha
+    # captcha is trigered with bandwith limit or hit limit
+    if all([page.find(string=txt) is None 
+            for txt in ["The data has been hidden","Dane zostały ukryte"]]):
+        return False
+    
+    while True:
+        # display captcha
+        url = f"https://stooq.pl/q/l/s/i/?{int(time.time()*1000)}"
+        resp = rq.get(url=url, headers=header)
+        with Image.open(io.BytesIO(resp.content)) as img:
+            img.save("./dev/captcha.png")  # DEBUG
+            print(
+                "Rewrite the above code\n(contains only uppercase letters and numbers)"
+            )
+            print("use ctr C to break")
+            try:
+                captcha_txt = input("?>")
+            except KeyboardInterrupt:
+                sys.exit(f"\nFATAL: user interuption")
+        url = f"https://stooq.pl/q/l/s/?t={captcha_txt}"
+        resp = rq.get(url=url, headers=header)
+
+        if resp.content:
+            return True
+        print("captcha not accepted, try again")
+
+
+async def __GDPR__(url: str):
+    global header
+    # GDPR stands for: GeneralDataProtectionRegulation
+    # simulate browser behaviour: clisk consent button
+    # to collect all headers, but more important cookies
+    print("Setting https connection...\n")
+
+    # we need to install playwright for the first time
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context()
+            await context.new_page()
+    except:
+        print("Installing Playwright....")
+        os.system("playwright install")
+
+    async def request(req):
+        # we take whole header for request
+        # so we can use it later to fake browser
+        global header
+        ah = await req.all_headers()
+        header = set_header(file=STOOQ_HEADER, upd_header=ah)
+
+    async def response(resp):
+        # from response we take set-cookie only
+        # and update headers
+        global header
+        ah = await resp.all_headers()
+        set_cookie = ah.get("set-cookie", "")
+        # multiple set-cookie are splited with new line
+        # cookie attributes are split by ';'
+        # first attribute is name=value
+        set_cookie = ";".join([c.split(";")[0] for c in set_cookie.split("/n")])
+        header = set_header(file=STOOQ_HEADER, upd_header={"cookie": set_cookie})
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        page.on(
+            "request",
+            lambda req: request(req)
+            if urlparse(req.url).netloc == urlparse(url).netloc
+            else None,
+        )
+        page.on(
+            "response",
+            lambda resp: response(resp)
+            if urlparse(resp.url).netloc == urlparse(url).netloc
+            else None,
+        )
+        await page.goto(url=url)
+        await page.locator("button.fc-cta-consent").click()
+        await page.wait_for_event("load")
+        await page.reload()
 
 
 def __scrap_stooq__(url: str) -> pd.DataFrame:
+    global header
     data = pd.DataFrame()
     for i in range(1, 100):
-        resp = rq.get(url=re.sub("%page%", str(i),
-                      url).lower(), headers=cookie)
+        urli = re.sub("%page%", str(i), url).lower()
+        while True:
+            resp = rq.get(url=urli, headers=header, allow_redirects=False)
 
-        if resp.status_code != 200:
+            if resp.status_code != 200:
+                if resp.status_code == 302:  # redirection
+                    # means the asset no longer available
+                    # remove from DB as not usefulle to predict future anymore
+                    data = pd.DataFrame(["asset removed"])
+                return data
+
+            page = bs(resp.content, "lxml")
+
+            if page.body is None:
+                # GDPR dialog
+                # when no cookies present, first time use
+                # will set proper headers and cookies
+                asyncio.run(__GDPR__(url=urli))
+                continue
+
+            # do we have captcha?
+            if __captcha__(page):
+                continue
             break
 
-        page = bs(resp.content, "lxml")
         htmlTab = page.find(id="fth1")
         if htmlTab is None:
             break
-        pdTab = pd.read_html(htmlTab.prettify())[0]  # type: ignore
+
+        pdTab = pd.read_html(io.StringIO(htmlTab.prettify()))[0]
 
         if pdTab.empty:
             break
@@ -131,12 +254,11 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
         pdTab.rename(str.lower, axis="columns", inplace=True)
         # rename polish to english
         pdTab.rename(
-            columns={"nazwa": "name", "kurs": "val",
-                     "data": "date", "wolumen": "vol"},
+            columns={"nazwa": "name", "kurs": "val", "data": "date", "wolumen": "vol","zamknięcie": "val"},
             inplace=True,
         )
         # rename columns (Last->val or Close->val),
-        pdTab.rename(columns={"last": "val", 'close': 'val'}, inplace=True)
+        pdTab.rename(columns={"last": "val", "close": "val"}, inplace=True)
         # convert dates
         pdTab["date"] = __convert_date__(pdTab["date"])
 
@@ -157,19 +279,27 @@ def __convert_date__(dates: pd.Series) -> pd.Series:
     def date_locale(date: pd.Series, local: str, format: str) -> pd.Series:
         with setlocale(locale.LC_ALL, local):  # type: ignore
             return pd.to_datetime(date, errors="coerce", format=format)
-
+    
     year = dt.today().strftime("%Y")
-    d1 = pd.to_datetime(dates, errors="coerce")  # hh:ss
-    d2 = date_locale(dates + ' ' + year, "en_GB.utf8",
-                     "%d %b %Y")  # 24 Feb 2023
-    d3 = date_locale(year + ' ' + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
-    d4 = date_locale(year + ' ' + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
+    today = dt.today().strftime('%d %b %Y ')
+    # ignore if no digits in date, probably group name
+    dates = dates.apply(lambda x: x if re.match(r"\d+", x) else today)
+
+    d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y")  # hh:ss
+    d2 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 24 Feb
+    d3 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
+    d4 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
+    d5 = date_locale(dates, "pl_PL.utf8", "%d %b %Y")  # 22 Lut 2023
 
     d1 = d1.fillna(d2)
     d1 = d1.fillna(d3)
     d1 = d1.fillna(d4)
+    d1 = d1.fillna(d5)
     d1 = d1.dt.date
     d1 = d1.fillna(" ")
+    # if date not recognized
+    if not d1.loc[d1 == " "].empty:
+        sys.exit(f'date format not recognized: {dates.loc[d1==" "]}')
     return d1
 
 
@@ -202,6 +332,6 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
         grpName["End"] = end[1:]
         grpRow = grpName.loc[:, "name"] == grp
         data = data.loc[
-            grpName["Start"].values[grpRow][0]: grpName["End"].values[grpRow][0], :
+            grpName["Start"].values[grpRow][0] : grpName["End"].values[grpRow][0], :
         ]
     return data

@@ -25,43 +25,52 @@ def query(
     symbol: List[str],
     from_date: Union[str, date],
     to_date: Union[str, date],
-    columns=[]
+    columns=['%'],
 ) -> pd.DataFrame:
-    """get data from sql db about index
-    (from tabs: INDEXES, INDEXES_DESC, GEO)
-    may also translate currency
-
-    using get_sql() (kind of wrapper)
+    """get data from sql db about symbol,
+    including relevant data from description tab
+    (GEO tab treated separately)
+    Usefull to outlook the data avaliable
 
     Args:
         db_file: db file
         tab: table in sql
         symbol: symbol from table:
         from_date: start date of data (including). if missing take only last date
-        to_date: last date of data (including)
+        to_date: last date of data (including). If empty string, return only last available
     """
     if not check_sql(db_file):
         return pd.DataFrame([""])
 
+    desc = "_DESC"
+    if tab == "GEO":
+        desc = ""
+
     # get tab columns (omit hash)
-    if not columns:
-        columns = [c for c in tab_columns(tab, db_file)+tab_columns(tab+'_DESC', db_file)
-                   if c not in ['hash']]
-    columns_txt = ','.join(set(columns))
+    if '%' in columns:
+        columns = [
+            c
+            for c in tab_columns(tab, db_file) + tab_columns(tab + desc, db_file)
+            if c not in ["hash"]
+        ]
+    columns_txt = ",".join(set(columns))
 
     cmd = f"""SELECT {columns_txt}
-	        FROM {tab}_DESC
-            INNER JOIN {tab} ON {tab}.hash={tab}_DESC.hash
-	        WHERE """
-    cmd += "".join([tab+"_DESC.symbol LIKE '"+s+"' OR " for s in symbol])
-    cmd += tab+"_DESC.symbol LIKE 'none' "  # just to finish last OR
+	        FROM {tab+desc}"""
+    if tab != "GEO":
+        cmd += f""" INNER JOIN {tab} ON {tab}.hash={tab+desc}.hash
+                WHERE """
+        cmd += "("
+        cmd += "".join([tab + desc + ".symbol LIKE '" + s + "' OR " for s in symbol])
+        cmd += tab + desc + ".symbol LIKE 'none' "  # just to finish last OR
+        cmd += ")"
 
-    if not to_date:
-        cmd += """AND date=to_date"""
-    else:
-        cmd += f"""AND strftime('%s',date) BETWEEN
-                    strftime('%s','{from_date}') AND strftime('%s','{to_date}')
-                """
+        if to_date == "" or from_date == "":
+            cmd += f"""AND strftime('%s',date)=strftime('%s',{tab+desc}.to_date)"""
+        else:
+            cmd += f"""AND strftime('%s',date) BETWEEN
+                        strftime('%s','{from_date}') AND strftime('%s','{to_date}')
+                    """
 
     resp = __execute_sql__([cmd], db_file)
     if resp:
@@ -70,7 +79,7 @@ def query(
         return pd.DataFrame([""])
 
 
-def get_from_geo(db_file: str, tab: str, search: str, what: str) -> list:
+def get_from_geo(db_file: str, tab: str, search: List, what: str) -> list:
     """
     Return symbol from country/region.
     Limit components to given table only
@@ -82,16 +91,23 @@ def get_from_geo(db_file: str, tab: str, search: str, what: str) -> list:
             FROM
                 {tab}_DESC s
             INNER JOIN GEO g ON s.country=g.iso2
-                WHERE g.{what} LIKE '{search}'
+                WHERE 
         """
+    cmd +='('
+    cmd += "".join([f"g.{what} LIKE '" + s + "' OR " for s in search])
+    cmd += f"g.{what} LIKE 'none' "  # just to finish last OR
+    cmd += ')'
+
     resp = __execute_sql__([cmd], db_file=db_file)
     if not resp:
         return []
+    elif "symbol" not in resp[cmd].columns:
+        return []
     else:
-        return resp[cmd]['symbol'].to_list()
+        return resp[cmd]["symbol"].to_list()
 
 
-def get_from_component(db_file: str, search: str) -> list:
+def get_from_component(db_file: str, search: List) -> list:
     """
     Return components of given symbol.
     Limit components to given table only
@@ -102,13 +118,17 @@ def get_from_component(db_file: str, search: str) -> list:
                 STOCK_DESC s
             INNER JOIN INDEXES_DESC i ON i.hash=c.indexes_hash
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
-                WHERE i.name LIKE '{search}'
+                WHERE 
         """
+    cmd +='('
+    cmd += "".join([f"i.name LIKE '" + s + "' OR " for s in search])
+    cmd += f"i.name LIKE 'none' "  # just to finish last OR
+    cmd += ')'
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp[cmd].empty:
         return []
     else:
-        return resp[cmd]['symbol'].to_list()
+        return resp[cmd]["symbol"].to_list()
 
 
 def tab_exists(tab: str) -> bool:
@@ -131,8 +151,9 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
     if dat.empty:
         return {}
     # all data shall be in capital letters!
-    dat = dat.apply(lambda x: x.str.upper()  # type: ignore
-                    if isinstance(x, str) else x)
+    dat = dat.apply(
+        lambda x: x.str.upper() if isinstance(x, str) else x  # type: ignore
+    )
 
     sql_scheme = read_json(SQL_file)
     if tab + "_DESC" in sql_scheme.keys():
@@ -140,6 +161,20 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
         tabL = [tab + "_DESC", tab]
     else:
         tabL = [tab]
+
+    # merge with what we already know
+    known = get(
+        db_file=db_file,
+        tab=tabL[-1],
+        get=["%"],
+        search=dat.loc[:, "hash"].tolist(),
+        cols=["hash"],
+    )["hash"]
+    # remove from DataFrame dat all rows where hash and date column is equal 
+    # to known DataFrame
+    dat=dat.loc[~(dat.hash.isin(known.hash) & dat.date.isin(known.date)),:]
+    if dat.empty:
+        return {'duplicaton':dat}
 
     for t in tabL:
         sql_columns = tab_columns(t, db_file)
@@ -162,15 +197,14 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
             search=[dat.loc[0, "indexes"]],
             cols=["symbol"],
         )["symbol"].iloc[0, 0]
-        components = pd.DataFrame(
-            {"stock_hash": dat["hash"], "indexes_hash": hash})
-        resp = __write_table__(
-            dat=components, tab="COMPONENTS", db_file=db_file)
-
-    return resp  # type: ignore
+        components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
+        resp = __write_table__(dat=components, tab="COMPONENTS", db_file=db_file)
+    return resp
 
 
-def __write_table__(dat: pd.DataFrame, tab: str, db_file: str) -> Dict[str, pd.DataFrame]:
+def __write_table__(
+    dat: pd.DataFrame, tab: str, db_file: str
+) -> Dict[str, pd.DataFrame]:
     """writes DataFrame to SQL table 'tab'"""
     records = list(dat.astype("string").to_records(index=False))
     cmd = [
@@ -193,17 +227,18 @@ def get(
 
     Args:
         tab: table to search
-        get: column name to extract
+        get: column name to extract (use '%' for all columns)
         search: what to get (use '*' for everything)
         cols: columns used for searching
     """
     all_cols = tab_columns(tab=tab, db_file=db_file)
+    tab = tab.upper()
     search = [s.upper() for s in search]
     get = [g.lower() for g in get]
     cols = [c.lower() for c in cols]
     if cols[0] == "%":
         cols = all_cols
-    if get[0] == '%':
+    if get[0] == "%":
         get = all_cols
     if not all(g in all_cols for g in get):
         print(f"Not correct get='{get}' argument.")
@@ -216,18 +251,58 @@ def get(
 
     # TODO: split symbols int groups by 500 items
     # there is 1000 limit on tree depth in SQLite
-    cmd = []
+    serach_split = __split_list__(search, 500)
+    resp_col = pd.DataFrame(columns=get)
+    resp = {}
+
     for c in cols:
-        part_cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
-        part_cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search])
-        part_cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
-        cmd += [part_cmd]
+        for search_part in serach_split:
+            cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
+            cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search_part])
+            cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
+            resp_part = __execute_sql__([cmd], db_file)
+            if not resp_part[cmd].empty:
+                resp_col = pd.concat([resp_col, resp_part[cmd]], ignore_index=True)
+        resp[c] = resp_col.drop_duplicates()
+
+    return resp
+
+
+def __split_list__(lst: list, nel: int) -> list:
+    """
+    Split list into parts with nel elements each (except last)
+    """
+    n = (len(lst) // nel) + 1
+    return [lst[i::n] for i in range(n)]
+
+
+def rm(tab: str, symbol: str, db_file: str) -> None:
+    """
+    Remove all instances to asset
+    remove from given tab, from tab+_DESC and from COMPONENTS
+    (so don't use tab='TAB_DESC'!)
+    """
+    symbol = symbol.upper()
+    tab = tab.upper()
+    # check if tab exists!
+    if not tab_exists(tab):
+        return
+    hash = get(
+        tab=tab + "_DESC",
+        get=["hash"],
+        search=[symbol],
+        cols=["symbol"],
+        db_file=db_file,
+    )
+    hash = hash["symbol"].loc[0, "hash"]
+
+    cmd = [f"DELETE FROM {tab} WHERE hash='{hash}'"]
+    cmd += [f"DELETE FROM COMPONENTS WHERE stock_hash='{hash}'"]
+    cmd += [f"DELETE FROM {tab}_DESC WHERE hash='{hash}'"]
 
     resp = __execute_sql__(cmd, db_file)
-    # rename resp keys to column name
-    resp = {cols[cmd.index(c)]: resp[c].drop_duplicates()
-            for c in cmd}
-    return resp
+
+    return
 
 
 def tab_columns(tab: str, db_file: str) -> List[str]:
@@ -286,7 +361,7 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
             {} in case of failure
     """
     ans = {}
-    cmd=''
+    cmd = ""
     # Foreign key constraints are disabled by default,
     # so must be enabled separately for each database connection.
     script = ["PRAGMA foreign_keys = ON"] + script
@@ -296,7 +371,6 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
         )
         cur = con.cursor()
         for cmd in script:
-            # print(cmd)  # DEBUG
             cur.execute(cmd)
             a = cur.fetchall()
             if a:
@@ -316,8 +390,8 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
         print(err)
         return {}
     finally:
-        cur.close() # type: ignore
-        con.close() # type: ignore
+        cur.close()  # type: ignore
+        con.close()  # type: ignore
 
 
 def __create_sql__(db_file: str) -> bool:
@@ -382,8 +456,7 @@ def __geo_tab__() -> pd.DataFrame:
         for c in wb.search_countries(".*")
         if c["region"]["value"] != "Aggregates"
     ]
-    con = pd.DataFrame(countries, columns=[
-                       "iso2", "country", "iso2_region", "region"])
+    con = pd.DataFrame(countries, columns=["iso2", "country", "iso2_region", "region"])
     con = con.apply(lambda x: x.str.upper())
     con = con.apply(lambda x: x.str.strip())
 
@@ -392,15 +465,13 @@ def __geo_tab__() -> pd.DataFrame:
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\\s*\(", ", ", x))
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
 
-    geo = con.merge(right=cur, how="left",
-                    left_on="country", right_on="Entity")
+    geo = con.merge(right=cur, how="left", left_on="country", right_on="Entity")
     geo = geo[
-        ["iso2", "country", "iso2_region", "region",
-            "currency", "code", "numeric_code"]
+        ["iso2", "country", "iso2_region", "region", "currency", "code", "numeric_code"]
     ]
-    geo["last_upd"] = dt.today()
-    geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")
-    geo.fillna("", inplace=True)
     # add 'unknown' just in case
     geo.loc[len(geo)] = ["UNKNOWN" for i in geo.columns]  # type: ignore
+    geo["last_upd"] = date.today()
+    geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")
+    geo.fillna("", inplace=True)
     return geo

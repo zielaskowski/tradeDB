@@ -1,3 +1,36 @@
+"""get requested data from db or from web if missing in db
+
+        Args:
+            cache: if True, will use google cache of the page
+            update: if True, will update the db (download from web)
+            db_file: force to use different db, will create if missing
+            tab: table to read from [INDEXES, COMODITIES, STOCK, ETF, GEO]
+        Symbol filters:
+        check correctness of each filter and display available option if no match
+        or matching possibilities if ambigues
+        If many args given the last on below list will matter
+        If none is given will list all symbols for table 'tab'
+            [symbol]: symbol of the ticker, 
+            [name]: name of ticker
+            [components]: list all components of given INDEXES (names)
+            [country]: filter results by iso2 of country
+            [region]: region to filter
+
+            [currency]: by defoult return in USD
+            start: start date for search
+            end: end date for search
+        """
+
+update allows web scrapping
+
+if update and symbol != '%' and dates outside range in sql
+    update from web
+
+if update and symbol == '%' 
+        change dates to today
+        update all indexes and stocks
+
+
 sql_stooq
 _____________
 

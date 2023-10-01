@@ -2,7 +2,6 @@ import hashlib
 import os
 import re
 import sys
-from datetime import datetime as dt
 from datetime import date
 from typing import Callable, List, Tuple, Union
 
@@ -31,7 +30,7 @@ class Trader:
             "INDEXES": {"file": "./assets/indexes.jsonc"},
             "STOCK": {"file": "./assets/stock.jsonc"},
             "ETF": {"file": "./assets/etf.jsonc"},
-            "COMODITIES": {"file": "./assets/comodities.jsonc"}
+            "COMODITIES": {"file": "./assets/comodities.jsonc"},
         }
         self.__read_sectors__()
         # database location
@@ -50,16 +49,22 @@ class Trader:
         if not sql.check_sql(self.db):
             # populate indexes
             ##################
-            self.__initiate_sql__()
+            self.__update_sql__()
 
-    def __initiate_sql__(self):
+    def __update_sql__(self, region=[]):
         print("writing INDEX info to db...")
 
-        from_date = date.today(),
-        to_date = date.today(),
+        from_date = date.today()
+        to_date = date.today()
         from_date, to_date = biz_date(from_date, to_date)
 
-        for key, region in self.SECTORS["INDEXES"]["data"].items():  # type: ignore
+        sector_dat = self.SECTORS["INDEXES"]["data"]
+
+        if region:
+            sector_dat = {k:v for k,v in sector_dat.items() 
+                          if v["description"]["region"] in region}
+
+        for key, region in sector_dat.items():  # type: ignore
             print(f"...downloading indexes for {key}")
             dat = api.stooq(
                 sector_id=region["api"]["id"],  # type: ignore
@@ -69,7 +74,7 @@ class Trader:
             )
             dat = self.__describe_table__(
                 dat=dat,
-                tab='INDEXES',
+                tab="INDEXES",
                 description=region["description"],  # type: ignore
             )
             resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
@@ -81,34 +86,40 @@ class Trader:
                     from_date=from_date,
                     to_date=to_date,
                 )
+                if datComp.empty:
+                    # no components for index
+                    continue
                 datComp = self.__describe_table__(
-                    dat=datComp,
-                    tab='STOCK',
-                    description={'indexes': s, 'country': c}
+                    dat=datComp, tab="STOCK", description={"indexes": s, "country": c}
                 )
-                resp = sql.put(dat=datComp, tab='STOCK', db_file=self.db)
+                resp = sql.put(dat=datComp, tab="STOCK", db_file=self.db)
+                if not resp:
+                    sys.exit(f"FATAL: wrong data for {s}")
 
     def __read_sectors__(self) -> None:
         try:
             for k in self.SECTORS:
                 self.SECTORS[k]["data"] = read_json(  # type: ignore
-                    self.SECTORS[k]["file"])
+                    self.SECTORS[k]["file"]
+                )
         except Exception as err:
             sys.exit(str(err))
 
-    def __check_arg__(self,
-                      arg: str,
-                      arg_name: str,
-                      opts: Union[List, str],
-                      tab='',
-                      opts_direct=False,
-                      strict=False) -> str:
+    def __check_arg__(
+        self,
+        arg: str,
+        arg_name: str,
+        opts: Union[List, str],
+        tab="",
+        opts_direct=False,
+        strict=False,
+    ) -> List:
         """
         check argumnt against possible values
         Display info if missing or argument in within opts
         pass check if arg equal "%"
         Args:
-            arg: arg value
+            arg: arg value, possibly more values split with ';'
             arg_name: arg name
             opts: list of col names with possible options, or list of options
             tab: table where to search for opts
@@ -117,72 +128,97 @@ class Trader:
         Returns "" if checks  fail or arg itself if all ok
         """
         if arg == "%":
-            return arg
+            return [arg]
         if not arg:
             print(f"Missing argument '{arg_name}'")
             print(f"Possible values are: {opts}")
-            return ""
+            return []
+
         arg = arg.upper()
+
+        args = arg.split(";")
+        args = [a.strip() for a in args]
 
         # collect options
         if not opts_direct:
             cols = opts
             opts = []
             for col in cols:
-                opts += sql.get(db_file=self.db,
-                                tab=tab,
-                                get=[col],
-                                search=['%'],
-                                cols=[col]
-                                )[col][col].to_list()
+                opts += sql.get(
+                    db_file=self.db, tab=tab, get=[col], search=["%"], cols=[col]
+                )[col][col].to_list()
         # make sure the opts are unique
         opts = list(set(opts))
-
-        if not strict:
-            r = re.compile(arg+'.*$')
-        else:
-            r = re.compile(arg + '$')
-        match = list(filter(r.match, opts))
-        if arg in match:  # if we have direct match whatever strict arg is
-            match = [arg]
-        if not match:
-            print(f"Wrong argument '{arg_name}' value: {arg}.")
+        opts = [o.upper() for o in opts]
+        if arg == "?":
             print(f"Possible values are: {opts}")
-            return ""
-        if len(match) > 1:
-            print(f"Ambiguous '{arg_name}' value: '{arg}'.")
-            print(f"Possible matches: {match}")
-            return ""
-        return match[0]
+            return []
 
-    def get(self, update=True, **kwargs) -> pd.DataFrame:
+        args_checked = []
+        for arg in args:
+            if not strict:
+                r = re.compile(arg + ".*$")
+            else:
+                r = re.compile(arg + "$")
+            match = list(filter(r.match, opts))
+            if arg in match:  # if we have match
+                args_checked += [arg]
+                continue
+            if len(match) == 1:
+                args_checked += [match[0]]
+                continue
+            if not match:
+                print(f"Wrong argument '{arg_name}' value: {arg}.")
+                print(f"Possible values are: {opts}")
+            if len(match) > 1:
+                print(f"Ambiguous '{arg_name}' value: '{arg}'.")
+                print(f"Possible matches: {match}")
+            return []
+        return args_checked
+
+    def get(
+        self, cache=False, update_symbols=False, update_dates=True, **kwargs
+    ) -> Union[pd.DataFrame, str, None]:
         """get requested data from db or from web if missing in db
 
         Args:
-            update: if True, will update the db
+            cache: if True, will use google cache of the page
+            update_symbols: if True, update symbols from web, can be limited with region
+                            may be time consuming and usually not needed
+                            defoult False
+            update_dates:   if requested dates not present in db - update
+                            set to False for speed and limit network transfer
+                            defoult True
             db_file: force to use different db, will create if missing
-            tab: table to read from [INDEXES, COMODITIES, STOCK, ETF]
+            tab: table to read from [INDEXES, COMODITIES, STOCK, ETF, GEO]
         Symbol filters:
         check correctness of each filter and display available option if no match
         or matching possibilities if ambigues
         If many args given the last on below list will matter
-        If none is given will list all symbols for table 'tab'
-            [symbol]: symbol of the ticker, 
+        If none is given will list all symbols and cols for table 'tab'
+        Use '?' to list allowed values
+        Use ';' to split more values
+            [symbol]: symbol of the ticker, defoult all
             [name]: name of ticker
             [components]: list all components of given INDEXES (names)
             [country]: filter results by iso2 of country
             [region]: region to filter
 
+            [columns]: limit result to selected columns, defoult all
             [currency]: by defoult return in USD
             start: start date for search
             end: end date for search
         """
+        if len(kwargs) == 0:
+            return self.get.__doc__
         # unpack arguments
         ##################
-        symbol = ['']
         # warn if we have overlaping arguments
-        args = [e for e in ['symbol', 'name', 'components', 'country', 'region']
-                if e in list(kwargs.keys())]
+        args = [
+            e
+            for e in ["symbol", "name", "components", "country", "region"]
+            if e in list(kwargs.keys())
+        ]
         if len(args) > 1:
             print(f"Overlaping arguments '{args}'.")
             print("The most broad will be used. See help")
@@ -191,88 +227,122 @@ class Trader:
         self.db = kwargs.get("db_file", self.db)
 
         # sql table
-        if not (tab := self.__check_arg__(
-                arg=kwargs.get("tab", ""),
-                arg_name="tab",
-                opts=list(self.SECTORS.keys()),
-                opts_direct=True)):
-            return pd.DataFrame([""])
+        opts = list(self.SECTORS.keys())
+        opts.append("GEO")
+        if not (
+            tab := self.__check_arg__(
+                arg=kwargs.get("tab", ""), 
+                arg_name="tab", 
+                opts=opts, 
+                opts_direct=True
+            )
+        ):
+            return ""
+        tab = tab[0]
 
         # symbol
-        if not (symbol := self.__check_arg__(
-            arg=kwargs.get("symbol", "%"),
-            arg_name='symbol',
-            opts=['symbol'],
-            tab=tab
-        )):
-            return pd.DataFrame([""])
-        symbol = [symbol]
+        if not (
+            symbol := self.__check_arg__(
+                arg=kwargs.get("symbol", "%"),
+                arg_name="symbol",
+                opts=["symbol"],
+                tab=tab,
+            )
+        ):
+            return ""
 
         # name
-        if not (name := self.__check_arg__(
-            arg=kwargs.get("name", "%"),
-            arg_name='name',
-            opts=['name'],
-            tab=tab
-        )):
-            return pd.DataFrame([""])
-        if name != '%':
-            symbol = sql.get(db_file=self.db,
-                             tab=tab+'_DESC',
-                             get=['symbol'],
-                             search=[name],
-                             cols=['name']
-                             )['name']['symbol'].to_list()
+        if not (
+            name := self.__check_arg__(
+                arg=kwargs.get("name", "%"), 
+                arg_name="name", 
+                opts=["name"], 
+                tab=tab
+            )
+        ):
+            return ""
+        if "%" not in name:
+            symbol = sql.get(
+                db_file=self.db,
+                tab=tab + "_DESC",
+                get=["symbol"],
+                search=name,
+                cols=["name"],
+            )["name"]["symbol"].to_list()
 
         # components
-        if not (component := self.__check_arg__(
+        if not (
+            component := self.__check_arg__(
                 arg=kwargs.get("component", "%"),
-                arg_name='components',
-                opts=['name'],
-                tab='INDEXES_DESC')):
+                arg_name="components",
+                opts=["name"],
+                tab="INDEXES_DESC",
+            )
+        ):
             return pd.DataFrame([""])
-        if component != '%':
+        if "%" not in component:
             if tab != "STOCK":
                 print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
             else:
-                symbol = sql.get_from_component(db_file=self.db,
-                                                search=component)
+                symbol = sql.get_from_component(db_file=self.db, search=component)
 
         # filter countries
-        if not (country := self.__check_arg__(
-            arg=kwargs.get("country", "%"),
-            arg_name='country',
-            opts=['iso2', 'country'],
-            tab='GEO'
-        )):
+        if not (
+            country := self.__check_arg__(
+                arg=kwargs.get("country", "%"),
+                arg_name="country",
+                opts=["iso2", "country"],
+                tab="GEO",
+            )
+        ):
             return pd.DataFrame([""])
-        if country != '%':
-            symbol = sql.get_from_geo(db_file=self.db,
-                                      tab=tab,
-                                      search=country,
-                                      what='country')
+        if "%" not in country:
+            symbol = sql.get_from_geo(
+                db_file=self.db, tab=tab, search=country, what="country"
+            )
 
         # filter region
-        if not (region := self.__check_arg__(
+        sector_dat = self.SECTORS["INDEXES"]["data"]
+        opts = list(set([v["description"]["region"] for _, v in sector_dat.items()]))
+        if not (
+            region := self.__check_arg__(
                 arg=kwargs.get("region", "%"),
                 arg_name="region",
-                opts=['region'],
-                tab='GEO')):
-            return pd.DataFrame([""])
-        if region != '%':
-            symbol = sql.get_from_geo(db_file=self.db,
-                                      tab=tab,
-                                      search=region,
-                                      what='region')
+                opts=opts,
+                opts_direct=True,
+            )
+        ):
+            return ""
+        if "%" not in region:
+            symbol = sql.get_from_geo(
+                db_file=self.db, tab=tab, search=region, what="region"
+            )
+
+        # columns
+        opts = sql.tab_columns(tab=tab, db_file=self.db)
+        opts += sql.tab_columns(tab=tab + "_DESC", db_file=self.db)
+        opts = [c for c in opts if c.upper() not in ["HASH"]]
+        if not (
+            columns := self.__check_arg__(
+                arg=kwargs.get("columns", "%"),
+                arg_name="columns",
+                opts=opts,
+                tab=tab,
+                opts_direct=True,
+            )
+        ):
+            return ""
 
         # currency
-        if not (currency := self.__check_arg__(
-            arg=kwargs.get('currency', '%'),
-            arg_name='currency',
-            opts=['currency_code'],
-            tab='GEO'
-        )):
-            return pd.DataFrame([""])
+        if not (
+            currency := self.__check_arg__(
+                arg=kwargs.get("currency", "%"),
+                arg_name="currency",
+                opts=["currency_code"],
+                tab="GEO",
+            )
+        ):
+            return ""
 
         # dates
         from_date = kwargs.get("start", date.today())
@@ -280,128 +350,165 @@ class Trader:
         from_date, to_date = biz_date(from_date, to_date)
 
         # updates data to meet required dates
-        if update:
-            self.__update_date__(tab=tab,
-                                 symbol=symbol,
-                                 from_date=from_date,
-                                 to_date=to_date
-                                 )
+        if update_symbols:
+            # set dates to today to limit trafic to avoid blocking
+            # (done in __initiate_sql__)
+            print(
+                "date range changed to today. Select particular symbol(s) if you want to update with different dates."
+            )
+            self.__update_sql__(region=region)
+            # new symbols may arrive
+            symbol = sql.get_from_geo(
+                db_file=self.db, tab=tab, search=region, what="region"
+            )
+        else:
+            if update_dates:
+                self.__update_dates__(
+                    cache=cache,
+                    tab=tab,
+                    symbol=symbol,
+                    from_date=from_date,
+                    to_date=to_date,
+                    update_dates=update_dates,
+                )
 
-        dat = sql.query(db_file=self.db,
-                        tab=tab,
-                        symbol=symbol,
-                        from_date=from_date,
-                        to_date=to_date,
-                        )
+        dat = sql.query(
+            db_file=self.db,
+            tab=tab,
+            symbol=symbol,
+            from_date=from_date,
+            to_date=to_date,
+            columns=columns,
+        )
 
-        if currency != '%':
+        if "%" not in currency:
             self.convert_currency(dat, currency)
         return dat
 
-    def __update_date__(self,
-                        tab: str,
-                        symbol: list,
-                        from_date: date,
-                        to_date: date) -> None:
-        # download missing data
+    def __update_dates__(
+        self,
+        cache: bool,
+        tab: str,
+        symbol: list,
+        from_date: date,
+        to_date: Union[date, str],
+        update_dates: bool,
+    ) -> None:
+        # download missing data only if dates outside min/max in db
         # assume all symbols are already in sql db
-        print("Updating data....")
-        min_dates = sql.get(db_file=self.db,
-                            tab=tab+'_DESC',
-                            get=['from_date', 'symbol'],
-                            search=symbol,
-                            cols=['symbol']
-                            )['symbol']
-        max_dates = sql.get(db_file=self.db,
-                            tab=tab+'_DESC',
-                            get=['to_date', 'symbol'],
-                            search=symbol,
-                            cols=['symbol']
-                            )['symbol']
+        # refuse to update if symbol=='%'
+        if "%" in symbol:
+            print("Blocked updating data for all symbols.")
+            print("Be more specific which symbols you want to update.")
+            print("Consider also using option 'update_symbols'")
+            return
+        min_dates = sql.get(
+            db_file=self.db,
+            tab=tab + "_DESC",
+            get=["from_date", "symbol"],
+            search=symbol,
+            cols=["symbol"],
+        )["symbol"]
+        max_dates = sql.get(
+            db_file=self.db,
+            tab=tab + "_DESC",
+            get=["to_date", "symbol"],
+            search=symbol,
+            cols=["symbol"],
+        )["symbol"]
 
-        symbolDF = sql.get(db_file=self.db,
-                           tab=tab+'_DESC',
-                           get=['symbol', 'name'],
-                           search=symbol,
-                           cols=['symbol']
-                           )['symbol']
+        symbolDF = sql.get(
+            db_file=self.db,
+            tab=tab + "_DESC",
+            get=["symbol", "name"],
+            search=symbol,
+            cols=["symbol"],
+        )["symbol"]
 
         for s, n in symbolDF.itertuples(index=False, name=None):
             min_date = min(
-                min_dates.loc[min_dates['symbol'] == s, 'from_date'])  # type: ignore
+                min_dates.loc[min_dates["symbol"] == s, "from_date"]
+            )  # type: ignore
             max_date = max(
-                max_dates.loc[max_dates['symbol'] == s, 'to_date'])  # type: ignore
+                max_dates.loc[max_dates["symbol"] == s, "to_date"]
+            )  # type: ignore
             if min_date > from_date or max_date < to_date:  # type: ignore
                 print(n)  # DEBUG
-                dat = api.stooq(from_date=min(from_date, min_date),
-                                to_date=max(to_date, max_date),
-                                symbol=s)
-                dat = self.__describe_table__(dat=dat,
-                                              tab=tab,
-                                              description={'symbol': s,
-                                                           'name': n})
+                dat = api.stooq(
+                    cache=cache,
+                    from_date=min(from_date, min_date),
+                    to_date=max(to_date, max_date),
+                    symbol=s,
+                )
                 if dat.empty:
+                    print("no data on web")  # DEBUG
                     continue
+
+                if dat.iloc[0, 0] == "asset removed":
+                    sql.rm(tab=tab, symbol=s, db_file=self.db)
+                    print("symbol removed")  # DEBUG
+                    continue
+
+                dat = self.__describe_table__(
+                    dat=dat, tab=tab, description={"symbol": s, "name": n}
+                )
+                print(f"data updated up/n{dat.loc[:,'to_date']}")  # DEBUG
                 resp = sql.put(dat=dat, tab=tab, db_file=self.db)
                 if not resp:
-                    sys.exit(
-                        f"FATAL: wrong data for '{n}'")
+                    sys.exit(f"FATAL: wrong data for '{n}'")
 
     def convert_currency(self, dat, currency):
         # download missing data
         # assume all symbols are already in sql db
-        min_date = min(sql.get(tab=tab+'_DESC',
-                               get=['from_date'],
-                               search=symbol,
-                               cols=['symbol']
-                               )['symbol']['from_date'])
-        max_date = max(sql.get(tab=tab+'_DESC',
-                               get=['to_date'],
-                               search=symbol,
-                               cols=['symbol']
-                               )['symbol']['to_date'])
+        min_date = min(
+            sql.get(
+                tab=tab + "_DESC", get=["from_date"], search=symbol, cols=["symbol"]
+            )["symbol"]["from_date"]
+        )
+        max_date = max(
+            sql.get(tab=tab + "_DESC", get=["to_date"], search=symbol, cols=["symbol"])[
+                "symbol"
+            ]["to_date"]
+        )
         if min_date > from_date or max_date < to_date:
             for s in symbol:
-                dat = api.stooq(from_date=min_date,
-                                to_date=max_date, symbol=s)
+                dat = api.stooq(from_date=min_date, to_date=max_date, symbol=s)
                 dat = self.__describe_table__(dat=dat, tab=tab, description={})
                 resp = sql.put(dat=dat, tab=tab, db_file=self.db)
                 if not resp:
-                    sys.exit(
-                        f"FATAL: wrong data for {region}{symbol}{component}")
+                    sys.exit(f"FATAL: wrong data for {region}{symbol}{component}")
 
-        country_from = list(set(dat['country']))
-        from_date = min(dat['from_date'])
-        to_date = max(dat['to_date'])
+        country_from = list(set(dat["country"]))
+        from_date = min(dat["from_date"])
+        to_date = max(dat["to_date"])
 
         for c in country_from:
-            country_to = sql.get(tab='GEO',
-                                 get=['currency_code'],
-                                 search=[country],
-                                 cols=['iso2'],
-                                 db_file=self.db)['iso2']['iso2'][0]
-            cur_dat = api.ecb(from_date=from_date,
-                              end_date=to_date,
-                              symbol=symbol)
-            cur_dat = self.__describe_table__(dat=cur_dat,
-                                              tab='CURRENCY',
-                                              description={'iso2': symbol})
+            country_to = sql.get(
+                tab="GEO",
+                get=["currency_code"],
+                search=[country],
+                cols=["iso2"],
+                db_file=self.db,
+            )["iso2"]["iso2"][0]
+            cur_dat = api.ecb(from_date=from_date, end_date=to_date, symbol=symbol)
+            cur_dat = self.__describe_table__(
+                dat=cur_dat, tab="CURRENCY", description={"iso2": symbol}
+            )
 
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict
     ) -> pd.DataFrame:
-
         if dat.empty:
             return dat
 
-        if tab == 'CURRENCY':
-            dat['iso2'] = description['iso2']
+        if tab == "CURRENCY":
+            dat["iso2"] = description["iso2"]
             return dat
 
         # extract countries
         ######
         # for indexes, country may be within name
-        if 'name' in dat.columns:
+        if "name" in dat.columns:
             dat["name"], dat["country"] = self.__country_txt__(dat["name"])
 
         # get info from description
@@ -436,10 +543,11 @@ class Trader:
                     db_file=self.db,
                 )["hash"].iloc[0, 0]
                 HASHrows = dat["hash"] == h
-                if date_sql:
+                if pd.notna(date_sql):
                     # type: ignore
-                    minmax_date += [func(dat.loc[HASHrows,
-                                         "date"].to_list() + [date_sql])]  # type: ignore
+                    minmax_date += [
+                        func(dat.loc[HASHrows, "date"].to_list() + [date_sql])
+                    ]  # type: ignore
                 else:
                     minmax_date += [func(dat.loc[HASHrows, "date"])]
             return minmax_date
@@ -463,10 +571,9 @@ class Trader:
         names = names.apply(lambda x: re.sub(r"WIG.*$", x + r" - POLAND", x))
         names = names.apply(lambda x: re.sub(r"ATX.*$", r"ATX - AUSTRIA", x))
 
-        countries = sql.get(tab="GEO",
-                            get=["country"],
-                            search=["%"],
-                            db_file=self.db)["country"]["country"]
+        countries = sql.get(tab="GEO", get=["country"], search=["%"], db_file=self.db)[
+            "country"
+        ]["country"]
 
         split = [re.split(" - ", n) for n in names]
         name_short = [s[0] for s in split]
@@ -482,17 +589,12 @@ class Trader:
                 name_country.append("null")
 
         # simplify countries - special cases
-        name_country = [re.sub("SOUTH KOREA", "KOREA, REP.", c)
-                        for c in name_country]
-        name_country = [re.sub("SLOVAKIA", "SLOVAK REPUBLIC", c)
-                        for c in name_country]
-        name_country = [re.sub("SWISS", "SWITZERLAND", c)
-                        for c in name_country]
+        name_country = [re.sub("SOUTH KOREA", "KOREA, REP.", c) for c in name_country]
+        name_country = [re.sub("SLOVAKIA", "SLOVAK REPUBLIC", c) for c in name_country]
+        name_country = [re.sub("SWISS", "SWITZERLAND", c) for c in name_country]
         name_country = [re.sub("TURKEY", "TURKIYE", c) for c in name_country]
-        name_country = [re.sub("U\\.S\\.", "UNITED STATES", c)
-                        for c in name_country]
-        name_country = [re.sub("RUSSIA", "RUSSIAN FEDERATION", c)
-                        for c in name_country]
+        name_country = [re.sub("U\\.S\\.", "UNITED STATES", c) for c in name_country]
+        name_country = [re.sub("RUSSIA", "RUSSIAN FEDERATION", c) for c in name_country]
 
         match = [re.search(c, r"-".join(countries)) for c in name_country]
         # handle what not found
@@ -513,12 +615,6 @@ class Trader:
             for n in name_country
         ]
         iso2 = [r["country"].iloc[0, 0] for r in resp]
-        # for r in resp:
-        #     i = r["country"].iloc[0, 0]
-        #     if not i:
-        #         iso2.append("")
-        #     else:
-        #         iso2.append(i)
         return (name_short, iso2)
 
     def world_bank(self, what: str, country: str):
