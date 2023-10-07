@@ -38,8 +38,7 @@ def stooq(
     sector_id=0,
     sector_grp="",
     symbol="",
-    component="",
-    cache=False,
+    component=""
 ) -> pd.DataFrame:
     """
     Get data from stooq web page
@@ -52,10 +51,6 @@ def stooq(
         end_date: end date for search, is ignored for sector search
     """
     data = pd.DataFrame([""])
-    if cache:
-        cache_url = "http://webcache.googleusercontent.com/search?q=cache:"
-    else:
-        cache_url = ""
     # convert dates
     to_dateS = dt.strftime(to_date, "%Y%m%d")  # type: ignore
     from_dateS = dt.strftime(from_date, "%Y%m%d")  # type: ignore
@@ -71,10 +66,10 @@ def stooq(
             data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
-        url = f"{cache_url}https://stooq.pl/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
+        url = f"https://stooq.pl/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
         data = __scrap_stooq__(url)
     elif component:
-        url = f"{cache_url}https://stooq.pl/q/i/?s={component}&l=%page%"
+        url = f"https://stooq.pl/q/i/?s={component}&l=%page%"
         data = __scrap_stooq__(url)
 
     return data
@@ -283,9 +278,11 @@ def __convert_date__(dates: pd.Series) -> pd.Series:
     year = dt.today().strftime("%Y")
     today = dt.today().strftime('%d %b %Y ')
     # ignore if no digits in date, probably group name
-    dates = dates.apply(lambda x: x if re.match(r"\d+", x) else today)
+    # possibly also nan
+    dates = dates.apply(lambda x: x if not pd.isna(x) else '1 Sty 1900')
+    dates = dates.apply(lambda x: x if re.match(r"\d+", x) else '1 Sty 1900')
 
-    d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y")  # hh:ss
+    d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y %H:%M")  # hh:ss
     d2 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 24 Feb
     d3 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
     d4 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
@@ -299,7 +296,7 @@ def __convert_date__(dates: pd.Series) -> pd.Series:
     d1 = d1.fillna(" ")
     # if date not recognized
     if not d1.loc[d1 == " "].empty:
-        sys.exit(f'date format not recognized: {dates.loc[d1==" "]}')
+        sys.exit(f'date format not recognized:\n{dates.loc[d1==" "]}')
     return d1
 
 

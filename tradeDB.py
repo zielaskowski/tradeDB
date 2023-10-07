@@ -3,9 +3,11 @@ import os
 import re
 import sys
 from datetime import date
-from typing import Callable, List, Tuple, Union
+from typing import Callable, List, Tuple, Union, Dict
 
 import pandas as pd
+from alive_progress import alive_bar
+
 
 from workers import api, sql
 from workers.common import read_json, biz_date
@@ -23,16 +25,17 @@ get data from WorldBank for country: GDP stock volume,
 
 
 class Trader:
-    def __init__(self, db="") -> None:
+    def __init__(self, db="", update_symbols=True) -> None:
         super().__init__()
         # read table sectors
-        self.SECTORS = {
-            "INDEXES": {"file": "./assets/indexes.jsonc"},
-            "STOCK": {"file": "./assets/stock.jsonc"},
-            "ETF": {"file": "./assets/etf.jsonc"},
-            "COMODITIES": {"file": "./assets/comodities.jsonc"},
-        }
-        self.__read_sectors__()
+        self.SECTORS = self.__read_sectors__(
+            {
+                "INDEXES": {"file": "./assets/indexes.jsonc"},
+                "STOCK": {"file": "./assets/stock.jsonc"},
+                "ETF": {"file": "./assets/etf.jsonc"},
+                "COMODITIES": {"file": "./assets/comodities.jsonc"},
+            }
+        )
         # database location
         if not db:
             self.db = "./trader.sqlite"
@@ -49,20 +52,20 @@ class Trader:
         if not sql.check_sql(self.db):
             # populate indexes
             ##################
-            self.__update_sql__()
+            if update_symbols:
+                self.__update_sql__(region=["%"])
 
-    def __update_sql__(self, region=[]):
+    def __update_sql__(self, region: List):
         print("writing INDEX info to db...")
-
-        from_date = date.today()
-        to_date = date.today()
-        from_date, to_date = biz_date(from_date, to_date)
+        from_date, to_date = self.__set_dates__({"today": True})
 
         sector_dat = self.SECTORS["INDEXES"]["data"]
-
-        if region:
-            sector_dat = {k:v for k,v in sector_dat.items() 
-                          if v["description"]["region"] in region}
+        if "%" not in region:
+            sector_dat = {
+                k: v
+                for k, v in sector_dat.items()
+                if v["description"]["region"] in region
+            }
 
         for key, region in sector_dat.items():  # type: ignore
             print(f"...downloading indexes for {key}")
@@ -96,14 +99,13 @@ class Trader:
                 if not resp:
                     sys.exit(f"FATAL: wrong data for {s}")
 
-    def __read_sectors__(self) -> None:
+    def __read_sectors__(self, address:Dict) -> Dict:
         try:
-            for k in self.SECTORS:
-                self.SECTORS[k]["data"] = read_json(  # type: ignore
-                    self.SECTORS[k]["file"]
-                )
+            for k in address:
+                address[k]["data"] = read_json(address[k]["file"])  # type: ignore
         except Exception as err:
             sys.exit(str(err))
+        return address
 
     def __check_arg__(
         self,
@@ -177,17 +179,16 @@ class Trader:
         return args_checked
 
     def get(
-        self, cache=False, update_symbols=False, update_dates=True, **kwargs
+        self, update_symbols=False, update_dates=True, **kwargs
     ) -> Union[pd.DataFrame, str, None]:
         """get requested data from db or from web if missing in db
 
         Args:
-            cache: if True, will use google cache of the page
             update_symbols: if True, update symbols from web, can be limited with region
                             may be time consuming and usually not needed
                             defoult False
             update_dates:   if requested dates not present in db - update
-                            set to False for speed and limit network transfer
+                            set to False for speed and to limit network transfer
                             defoult True
             db_file: force to use different db, will create if missing
             tab: table to read from [INDEXES, COMODITIES, STOCK, ETF, GEO]
@@ -231,10 +232,7 @@ class Trader:
         opts.append("GEO")
         if not (
             tab := self.__check_arg__(
-                arg=kwargs.get("tab", ""), 
-                arg_name="tab", 
-                opts=opts, 
-                opts_direct=True
+                arg=kwargs.get("tab", ""), arg_name="tab", opts=opts, opts_direct=True
             )
         ):
             return ""
@@ -254,10 +252,7 @@ class Trader:
         # name
         if not (
             name := self.__check_arg__(
-                arg=kwargs.get("name", "%"), 
-                arg_name="name", 
-                opts=["name"], 
-                tab=tab
+                arg=kwargs.get("name", "%"), arg_name="name", opts=["name"], tab=tab
             )
         ):
             return ""
@@ -345,32 +340,35 @@ class Trader:
             return ""
 
         # dates
-        from_date = kwargs.get("start", date.today())
-        to_date = kwargs.get("end", date.today())
-        from_date, to_date = biz_date(from_date, to_date)
+        # if not selected particular names, display last date only
+        # and do not update
+        if "%" in name or "symbol" not in kwargs.keys():
+            from_date, to_date = self.__set_dates__()
+            if update_dates:
+                print("Date range changed to last available data.")
+                print(
+                    "Select particular symbol(s) or name(s) if you want different dates."
+                )
+                update_dates = False
+        else:
+            from_date, to_date = self.__set_dates__(kwargs)
 
-        # updates data to meet required dates
         if update_symbols:
             # set dates to today to limit trafic to avoid blocking
-            # (done in __initiate_sql__)
-            print(
-                "date range changed to today. Select particular symbol(s) if you want to update with different dates."
-            )
+            # (done in __update_sql__)
+            print("Date range changed to last working day when updating symbols.")
             self.__update_sql__(region=region)
-            # new symbols may arrive
+            # new symbols may arrive so update
             symbol = sql.get_from_geo(
                 db_file=self.db, tab=tab, search=region, what="region"
             )
-        else:
-            if update_dates:
-                self.__update_dates__(
-                    cache=cache,
-                    tab=tab,
-                    symbol=symbol,
-                    from_date=from_date,
-                    to_date=to_date,
-                    update_dates=update_dates,
-                )
+            from_date, to_date = self.__set_dates__()
+            update_dates = False
+
+        if update_dates:
+            self.__update_dates__(
+                tab=tab, symbol=symbol, from_date=from_date, to_date=to_date
+            )
 
         dat = sql.query(
             db_file=self.db,
@@ -385,23 +383,27 @@ class Trader:
             self.convert_currency(dat, currency)
         return dat
 
+    def __set_dates__(self, dates={}) -> Tuple:
+        if not dates:
+            return None, None
+        else:
+            from_date = dates.get("start", date.today())
+            to_date = dates.get("end", date.today())
+            from_date, to_date = biz_date(from_date, to_date)
+            return from_date, to_date
+
     def __update_dates__(
         self,
-        cache: bool,
         tab: str,
         symbol: list,
         from_date: date,
-        to_date: Union[date, str],
-        update_dates: bool,
+        to_date: date,
     ) -> None:
         # download missing data only if dates outside min/max in db
         # assume all symbols are already in sql db
-        # refuse to update if symbol=='%'
-        if "%" in symbol:
-            print("Blocked updating data for all symbols.")
-            print("Be more specific which symbols you want to update.")
-            print("Consider also using option 'update_symbols'")
+        if tab == "GEO":
             return
+
         min_dates = sql.get(
             db_file=self.db,
             tab=tab + "_DESC",
@@ -417,6 +419,19 @@ class Trader:
             cols=["symbol"],
         )["symbol"]
 
+        # refuse to update if symbol=='%'
+        # and requested dates outside what available and not GEO
+        min_dates["from_date"].min
+        max_dates["to_date"].max
+        if "%" in symbol and (
+            min_dates["from_date"].min() > from_date
+            or max_dates["to_date"].max() < to_date
+        ):
+            print("Blocked updating data for all symbols.")
+            print("Be more specific which symbols you want to update.")
+            print("Consider also using option 'update_symbols'")
+            return
+
         symbolDF = sql.get(
             db_file=self.db,
             tab=tab + "_DESC",
@@ -424,38 +439,33 @@ class Trader:
             search=symbol,
             cols=["symbol"],
         )["symbol"]
+        print("...updating dates")
+        with alive_bar(len(symbolDF)) as bar:
+            for s, n in symbolDF.itertuples(index=False, name=None):
+                min_date = min_dates.loc[min_dates["symbol"] == s, "from_date"].min()  # type: ignore
+                max_date = max_dates.loc[max_dates["symbol"] == s, "to_date"].max()  # type: ignore
+                if min_date > from_date or max_date < to_date:  # type: ignore
+                    dat = api.stooq(
+                        from_date=min(from_date, min_date),
+                        to_date=max(to_date, max_date),
+                        symbol=s,
+                    )
+                    if dat.empty:
+                        print("no data on web")  # DEBUG
+                        continue
 
-        for s, n in symbolDF.itertuples(index=False, name=None):
-            min_date = min(
-                min_dates.loc[min_dates["symbol"] == s, "from_date"]
-            )  # type: ignore
-            max_date = max(
-                max_dates.loc[max_dates["symbol"] == s, "to_date"]
-            )  # type: ignore
-            if min_date > from_date or max_date < to_date:  # type: ignore
-                print(n)  # DEBUG
-                dat = api.stooq(
-                    cache=cache,
-                    from_date=min(from_date, min_date),
-                    to_date=max(to_date, max_date),
-                    symbol=s,
-                )
-                if dat.empty:
-                    print("no data on web")  # DEBUG
-                    continue
+                    if dat.iloc[0, 0] == "asset removed":
+                        sql.rm(tab=tab, symbol=s, db_file=self.db)
+                        print("symbol removed")  # DEBUG
+                        continue
 
-                if dat.iloc[0, 0] == "asset removed":
-                    sql.rm(tab=tab, symbol=s, db_file=self.db)
-                    print("symbol removed")  # DEBUG
-                    continue
-
-                dat = self.__describe_table__(
-                    dat=dat, tab=tab, description={"symbol": s, "name": n}
-                )
-                print(f"data updated up/n{dat.loc[:,'to_date']}")  # DEBUG
-                resp = sql.put(dat=dat, tab=tab, db_file=self.db)
-                if not resp:
-                    sys.exit(f"FATAL: wrong data for '{n}'")
+                    dat = self.__describe_table__(
+                        dat=dat, tab=tab, description={"symbol": s, "name": n}
+                    )
+                    resp = sql.put(dat=dat, tab=tab, db_file=self.db)
+                    if not resp:
+                        sys.exit(f"FATAL: wrong data for '{n}'")
+                    bar()
 
     def convert_currency(self, dat, currency):
         # download missing data
@@ -543,11 +553,10 @@ class Trader:
                     db_file=self.db,
                 )["hash"].iloc[0, 0]
                 HASHrows = dat["hash"] == h
-                if pd.notna(date_sql):
-                    # type: ignore
+                if pd.notna(date_sql) and date_sql != "":
                     minmax_date += [
                         func(dat.loc[HASHrows, "date"].to_list() + [date_sql])
-                    ]  # type: ignore
+                    ]
                 else:
                     minmax_date += [func(dat.loc[HASHrows, "date"])]
             return minmax_date

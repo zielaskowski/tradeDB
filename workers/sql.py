@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import sqlite3
 from datetime import datetime as dt
 from datetime import date
@@ -23,9 +24,9 @@ def query(
     db_file: str,
     tab: str,
     symbol: List[str],
-    from_date: Union[str, date],
-    to_date: Union[str, date],
-    columns=['%'],
+    from_date: Union[None, date],
+    to_date: Union[None, date],
+    columns=["%"],
 ) -> pd.DataFrame:
     """get data from sql db about symbol,
     including relevant data from description tab
@@ -38,6 +39,7 @@ def query(
         symbol: symbol from table:
         from_date: start date of data (including). if missing take only last date
         to_date: last date of data (including). If empty string, return only last available
+        columns: columns to be included in response
     """
     if not check_sql(db_file):
         return pd.DataFrame([""])
@@ -47,7 +49,7 @@ def query(
         desc = ""
 
     # get tab columns (omit hash)
-    if '%' in columns:
+    if "%" in columns:
         columns = [
             c
             for c in tab_columns(tab, db_file) + tab_columns(tab + desc, db_file)
@@ -65,7 +67,7 @@ def query(
         cmd += tab + desc + ".symbol LIKE 'none' "  # just to finish last OR
         cmd += ")"
 
-        if to_date == "" or from_date == "":
+        if not to_date or not from_date:
             cmd += f"""AND strftime('%s',date)=strftime('%s',{tab+desc}.to_date)"""
         else:
             cmd += f"""AND strftime('%s',date) BETWEEN
@@ -93,10 +95,10 @@ def get_from_geo(db_file: str, tab: str, search: List, what: str) -> list:
             INNER JOIN GEO g ON s.country=g.iso2
                 WHERE 
         """
-    cmd +='('
+    cmd += "("
     cmd += "".join([f"g.{what} LIKE '" + s + "' OR " for s in search])
     cmd += f"g.{what} LIKE 'none' "  # just to finish last OR
-    cmd += ')'
+    cmd += ")"
 
     resp = __execute_sql__([cmd], db_file=db_file)
     if not resp:
@@ -120,12 +122,14 @@ def get_from_component(db_file: str, search: List) -> list:
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
                 WHERE 
         """
-    cmd +='('
+    cmd += "("
     cmd += "".join([f"i.name LIKE '" + s + "' OR " for s in search])
     cmd += f"i.name LIKE 'none' "  # just to finish last OR
-    cmd += ')'
+    cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp[cmd].empty:
+        return []
+    elif "symbol" not in resp[cmd].columns:
         return []
     else:
         return resp[cmd]["symbol"].to_list()
@@ -170,16 +174,22 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
         search=dat.loc[:, "hash"].tolist(),
         cols=["hash"],
     )["hash"]
-    # remove from DataFrame dat all rows where hash and date column is equal 
+    # remove from DataFrame dat all rows where hash and date column is equal
     # to known DataFrame
-    dat=dat.loc[~(dat.hash.isin(known.hash) & dat.date.isin(known.date)),:]
+    if known.iloc[0, 0] != "":
+        dat = dat.loc[
+            ~(dat.hash.isin(known.hash) & dat.date.isin(known.date)), :
+        ].reset_index(drop=True)
     if dat.empty:
-        return {'duplicaton':dat}
+        return {"duplicaton": dat}
 
     for t in tabL:
         sql_columns = tab_columns(t, db_file)
+        d = dat.loc[:, [c in sql_columns for c in dat.columns]]
+        # do not write empty or NaNs
+        d = d.dropna()
         resp = __write_table__(
-            dat=dat.loc[:, [c in sql_columns for c in dat.columns]],
+            dat=d,
             tab=t,
             db_file=db_file,
         )
@@ -199,7 +209,8 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
         )["symbol"].iloc[0, 0]
         components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
         resp = __write_table__(dat=components, tab="COMPONENTS", db_file=db_file)
-    return resp
+        return resp
+    return {"put": "success"}
 
 
 def __write_table__(
@@ -231,6 +242,7 @@ def get(
         search: what to get (use '*' for everything)
         cols: columns used for searching
     """
+    resp = {}
     all_cols = tab_columns(tab=tab, db_file=db_file)
     tab = tab.upper()
     search = [s.upper() for s in search]
@@ -249,31 +261,57 @@ def get(
     if not tab_exists(tab):
         return {}
 
-    # TODO: split symbols int groups by 500 items
-    # there is 1000 limit on tree depth in SQLite
-    serach_split = __split_list__(search, 500)
-    resp_col = pd.DataFrame(columns=get)
-    resp = {}
-
     for c in cols:
-        for search_part in serach_split:
-            cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
-            cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search_part])
-            cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
-            resp_part = __execute_sql__([cmd], db_file)
-            if not resp_part[cmd].empty:
-                resp_col = pd.concat([resp_col, resp_part[cmd]], ignore_index=True)
+        cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
+        cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search])
+        cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
+        resp_col = __execute_sql__([cmd], db_file)[cmd]
         resp[c] = resp_col.drop_duplicates()
-
     return resp
 
 
-def __split_list__(lst: list, nel: int) -> list:
+def __split_cmd__(script: list) -> List[List]:
+    # split OR logic chain into 500 len elements
+    # there is limit of 1000 tree depth
+    resp = [[]]
+    for cmd in script:
+        cmd = re.sub(r"[\t\n\r]*", "", cmd)  # remove newline and tabs
+        cmd1_re = (
+            r"(^.*WHERE[^\(]*)"  # take all from begining to 'WHERE' just before '('
+        )
+        cmd2_re = (
+            r"(\([^\()]*\))"  # everything (without parenthesis) between parenthesis
+        )
+        cmd3_re = r"((?<=\)).+$)"  # everything from last parenthesis to end
+        res = re.findall(f"{cmd1_re}|{cmd2_re}|{cmd3_re}", cmd)
+        res = ["".join(t) for t in res]  # remove empty elements from list
+        if len(res) == 3:
+            lenOR = len(re.findall(" OR ", res[1]))
+            lenAND = len(re.findall(" AND ", res[1]))
+            if lenAND != 0:
+                # not possible to split AND chain
+                if lenAND + lenOR > 500:
+                    sys.exit("FATAL: sql cmd exceeded length limit")
+            if lenOR > 500:
+                cmd_new = [res[0] + c + res[2] for c in __split_list__(res[1], 500)]
+                resp.append(cmd_new)
+            else:
+                resp.append([cmd])
+        else:
+            resp.append([cmd])
+    return [r for r in resp if r]
+
+
+def __split_list__(lst: str, nel: int) -> list:
     """
     Split list into parts with nel elements each (except last)
     """
-    n = (len(lst) // nel) + 1
-    return [lst[i::n] for i in range(n)]
+    lst_split = re.split("OR", lst)
+    n = (len(lst_split) // nel) + 1
+    cmd_split = [" OR ".join(lst_split[i * nel : (i + 1) * nel]) for i in range(n)]
+    # make sure each part starts and ends with parenthesis
+    cmd_split = ["(" + re.sub(r"[\(\)]", "", s) + ") " for s in cmd_split]
+    return cmd_split
 
 
 def rm(tab: str, symbol: str, db_file: str) -> None:
@@ -349,6 +387,7 @@ def check_sql(db_file: str) -> bool:
 def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
     """Execute provided SQL commands.
     If db returns anything write as dict {command: respose as pd.DataFrame}
+    Split cmd if logic tree exceeds 500 (just in case as limit is 1000)
 
     Args:
         script (list): list of sql commands to execute
@@ -365,19 +404,29 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
     # Foreign key constraints are disabled by default,
     # so must be enabled separately for each database connection.
     script = ["PRAGMA foreign_keys = ON"] + script
+    script_split = __split_cmd__(script)
     try:
         con = sqlite3.connect(
             db_file, detect_types=sqlite3.PARSE_COLNAMES | sqlite3.PARSE_DECLTYPES
         )
         cur = con.cursor()
-        for cmd in script:
-            cur.execute(cmd)
-            a = cur.fetchall()
-            if a:
-                colnames = [c[0] for c in cur.description]
-                ans[cmd] = pd.DataFrame(a, columns=colnames)
-            else:
-                ans[cmd] = pd.DataFrame([""])
+        for cmd_split in script_split:
+            cmd = script[script_split.index(cmd_split)]
+            for c in cmd_split:
+                cur.execute(c)
+                a = cur.fetchall()
+                if a:
+                    colnames = [c[0] for c in cur.description]
+                    if cmd in ans.keys():
+                        ans[cmd] = pd.concat(
+                            [ans[cmd].fillna(''),
+                            pd.DataFrame(a, columns=colnames).fillna('')],
+                            ignore_index=True,
+                        )
+                    else:
+                        ans[cmd] = pd.DataFrame(a, columns=colnames)
+                else:
+                    ans[cmd] = pd.DataFrame([""])
         con.commit()
         return ans
     except sqlite3.IntegrityError as err:
@@ -462,10 +511,21 @@ def __geo_tab__() -> pd.DataFrame:
 
     cur = pd.read_csv(CURR_file)
     cur = cur.loc[cur["withdrawal_date"].isna(), :]
-    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\\s*\(", ", ", x))
+    # some cleaning
+    # replace '(abc)' with ', abc'
+    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\s*\(", ", ", x))
     cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
+    cur["Entity"] = cur["Entity"].apply(
+        lambda x: re.sub("CAYMAN ISLANDS, THE", "CAYMAN ISLANDS", x)
+    )
+    cur["Entity"] = cur["Entity"].apply(
+        lambda x: re.sub("ST.MARTIN, FRENCH PART", "ST.MARTIN (FRENCH PART)", x)
+    )
+    cur["Entity"] = cur["Entity"].apply(
+        lambda x: re.sub("ST.MARTIN, FRENCH PART", "ST.MARTIN (FRENCH PART)", x)
+    )
 
-    geo = con.merge(right=cur, how="left", left_on="country", right_on="Entity")
+    geo = con.merge(right=cur, how="inner", left_on="country", right_on="Entity")
     geo = geo[
         ["iso2", "country", "iso2_region", "region", "currency", "code", "numeric_code"]
     ]
