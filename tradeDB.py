@@ -251,7 +251,7 @@ class Trader:
         # name
         if not (
             name := self.__check_arg__(
-                arg=kwargs.get("name", "%"), arg_name="name", opts=["name"], tab=tab
+                arg=kwargs.get("name", "%"), arg_name="name", opts=["name"], tab=tab+'_DESC'
             )
         ):
             return ""
@@ -341,7 +341,7 @@ class Trader:
         # dates
         # if not selected particular names, display last date only
         # and do not update
-        if "%" in name or "symbol" not in kwargs.keys():
+        if not any([a in ['name', "symbol"] for a in kwargs.keys()]):
             from_date, to_date = self.__set_dates__()
             if update_dates:
                 print("Date range changed to last available data.")
@@ -469,6 +469,8 @@ class Trader:
     def convert_currency(self, dat, currency):
         # download missing data
         # assume all symbols are already in sql db
+        print("currency conversion not implemented yet")
+        return
         min_date = min(
             sql.get(
                 tab=tab + "_DESC", get=["from_date"], search=symbol, cols=["symbol"]

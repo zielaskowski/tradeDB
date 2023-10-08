@@ -87,7 +87,7 @@ def biz_date(
     # trnsform such week is from Tu=0 to Mo=6
     from_date -= timedelta(max(1, (from_date.weekday() + 6) % 7 - 3))
     to_date = to_date.astimezone(pytz.timezone("Canada/Mountain"))
-    if to_date > from_date:
+    if to_date < from_date:
         to_date = from_date
 
     return (from_date.date(), to_date.date())

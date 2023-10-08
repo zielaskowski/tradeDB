@@ -186,7 +186,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
         rm = comp.loc[comp["_merge"] == "right_only"]
     else:
         new = dat
-        rm = None
+        rm = pd.DataFrame()
 
     if not new.empty:
         for t in tabL:
@@ -202,7 +202,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
             if not resp:
                 return
             # delete asset, do not affect DESC items
-            if not re.search("DESC", t) and rm:
+            if not re.search("DESC", t) and not rm.empty:
                 d = rm.loc[:, [c in sql_columns for c in rm.columns]]
                 resp = rm_asset(tab=t, dat=d, db_file=db_file)
 
@@ -216,7 +216,11 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
             get=["hash"],
             search=[dat.loc[0, "indexes"]],
             cols=["symbol"],
-        )["symbol"].iloc[0, 0]
+        )["symbol"]
+        if not hash.empty:
+            hash = hash.iloc[0, 0]
+        else:
+            return
         components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
         resp = __write_table__(dat=components, tab="COMPONENTS", db_file=db_file)
         return resp
@@ -234,6 +238,7 @@ def __write_table__(
         """
         for values_list in records
     ]
+    cmd = [re.sub('<NA>','NULL',str(c)) for c in cmd]
     return __execute_sql__(cmd, db_file)
 
 
@@ -329,14 +334,11 @@ def rm_asset(
 ) -> Union[None, Dict[str, pd.DataFrame]]:
     records = list(dat.astype("string").to_records(index=False))
     cmd = []
-    for values_list, col in records, dat.columns:
+    for row in records:
         cmd.append(
-            [
-                f"""DELETE FROM {tab} WHERE (
-                {col} = '{values_list}'
-            """
-                for col in dat.columns
-            ]
+                f"DELETE FROM {tab} WHERE ("+
+                (' AND ').join([f"{dat.columns[i]} = '{row[i]}'" for i in range(len(row))])+
+                ' )'
         )
 
     return __execute_sql__(cmd, db_file)
