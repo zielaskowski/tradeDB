@@ -1,7 +1,12 @@
+import locale
 import json
+import sys
+import hashlib
 from typing import Dict, Union, Tuple
 import re
 import pandas as pd
+
+from contextlib import contextmanager
 
 from datetime import date, timedelta
 from datetime import datetime as dt
@@ -86,3 +91,53 @@ def biz_date(
         to_date = from_date
 
     return (from_date.date(), to_date.date())
+
+def convert_date(dates: pd.Series) -> pd.Series:
+    # set date: it's in 'mmm d'(ENG) or 'd mmm'(PL) or 'hh:ss' for today
+    # return '' if format not known
+    @contextmanager
+    def setlocale(*args, **kwargs):
+        # temporary change locale
+        saved = locale.setlocale(locale.LC_ALL)
+        yield locale.setlocale(*args, **kwargs)
+        locale.setlocale(locale.LC_ALL, saved)
+
+    def date_locale(date: pd.Series, local: str, format: str) -> pd.Series:
+        with setlocale(locale.LC_ALL, local):  # type: ignore
+            return pd.to_datetime(date, errors="coerce", format=format)
+    
+    year = dt.today().strftime("%Y")
+    today = dt.today().strftime('%d %b %Y ')
+    # ignore if no digits in date, probably group name
+    # possibly also nan
+    dates = dates.apply(lambda x: x if not pd.isna(x) else '1 Sty 1900')
+    dates = dates.apply(lambda x: x if re.match(r"\d+", x) else '1 Sty 1900')
+
+    d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y %H:%M")  # hh:ss
+    d2 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 24 Feb
+    d3 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
+    d4 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
+    d5 = date_locale(dates, "pl_PL.utf8", "%d %b %Y")  # 22 Lut 2023
+
+    d1 = d1.fillna(d2)
+    d1 = d1.fillna(d3)
+    d1 = d1.fillna(d4)
+    d1 = d1.fillna(d5)
+    d1 = d1.dt.date
+    d1 = d1.fillna(" ")
+    # if date not recognized
+    if not d1.loc[d1 == " "].empty:
+        sys.exit(f'date format not recognized:\n{dates.loc[d1==" "]}')
+    return d1
+
+def hash_table(dat:pd.DataFrame, tab:str)->Union[pd.Series,None]:
+    if not all(el in dat.columns for el in ['symbol', 'name']):
+        print("no columns to hash")
+        return None
+    d=dat.copy(deep=True)
+    d["tab"] = tab
+    d["hash"] = [
+        hashlib.md5("".join(r).encode("utf-8")).hexdigest()
+        for r in d.loc[:, ["symbol", "name", "tab"]].to_records(index=False)
+    ]
+    return d['hash']

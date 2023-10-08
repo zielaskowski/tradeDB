@@ -95,7 +95,7 @@
     //** connection between indexes and stock
     //** one stock can be in more then one index
     "indexes_hash": "TEXT",
-    "stock_hash": "TEXT",
+    "stock_hash": "TEXT PRIMARY KEY",
     "FOREIGN": [
       { "indexes_hash": "INDEXES_DESC(hash)" },
       { "stock_hash": "STOCK_DESC(hash)" }

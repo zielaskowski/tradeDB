@@ -1,4 +1,3 @@
-import hashlib
 import os
 import re
 import sys
@@ -10,7 +9,7 @@ from alive_progress import alive_bar
 
 
 from workers import api, sql
-from workers.common import read_json, biz_date
+from workers.common import read_json, biz_date, hash_table
 
 """manages getting stock data
 use workers based on context
@@ -308,7 +307,7 @@ class Trader:
             )
         ):
             return ""
-        if "%" not in region:
+        if "%" not in region and not update_symbols:
             symbol = sql.get_from_geo(
                 db_file=self.db, tab=tab, search=region, what="region"
             )
@@ -455,7 +454,7 @@ class Trader:
                         continue
 
                     if dat.iloc[0, 0] == "asset removed":
-                        sql.rm(tab=tab, symbol=s, db_file=self.db)
+                        sql.rm_all(tab=tab, symbol=s, db_file=self.db)
                         print("symbol removed")  # DEBUG
                         continue
 
@@ -529,12 +528,7 @@ class Trader:
 
         # hash table
         ######
-        dat["tab"] = tab
-        dat["hash"] = [
-            hashlib.md5("".join(r).encode("utf-8")).hexdigest()
-            for r in dat.loc[:, ["symbol", "name", "tab"]].to_records(index=False)
-        ]
-        dat.drop(columns=["tab"], inplace=True)
+        dat["hash"] = hash_table(dat,tab)
 
         # get dates
         ######
@@ -551,14 +545,14 @@ class Trader:
                     search=[h],
                     cols=["hash"],
                     db_file=self.db,
-                )["hash"].iloc[0, 0]
-                HASHrows = dat["hash"] == h
-                if pd.notna(date_sql) and date_sql != "":
-                    minmax_date += [
-                        func(dat.loc[HASHrows, "date"].to_list() + [date_sql])
-                    ]
+                )['hash']
+                if date_sql.empty:
+                    minmax_date += [func(dat.loc[dat["hash"] == h, "date"])]
                 else:
-                    minmax_date += [func(dat.loc[HASHrows, "date"])]
+                    minmax_date += [
+                        func(dat.loc[dat["hash"] == h, "date"].to_list() + [date_sql.iloc[0, 0]
+                ])
+                    ]
             return minmax_date
 
         dat["from_date"] = minmax(min, dat)

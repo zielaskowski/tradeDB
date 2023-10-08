@@ -9,7 +9,7 @@ from typing import Dict, List, Union
 import pandas as pd
 import wbdata as wb
 
-from workers.common import read_json
+from workers.common import read_json, hash_table
 
 """manages SQL db.
 DB structure is described in ./asstes/sql_scheme.json
@@ -27,7 +27,7 @@ def query(
     from_date: Union[None, date],
     to_date: Union[None, date],
     columns=["%"],
-) -> pd.DataFrame:
+) -> Union[None, pd.DataFrame]:
     """get data from sql db about symbol,
     including relevant data from description tab
     (GEO tab treated separately)
@@ -42,7 +42,7 @@ def query(
         columns: columns to be included in response
     """
     if not check_sql(db_file):
-        return pd.DataFrame([""])
+        return
 
     desc = "_DESC"
     if tab == "GEO":
@@ -78,10 +78,10 @@ def query(
     if resp:
         return resp[cmd]
     else:
-        return pd.DataFrame([""])
+        return
 
 
-def get_from_geo(db_file: str, tab: str, search: List, what: str) -> list:
+def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
     """
     Return symbol from country/region.
     Limit components to given table only
@@ -101,12 +101,9 @@ def get_from_geo(db_file: str, tab: str, search: List, what: str) -> list:
     cmd += ")"
 
     resp = __execute_sql__([cmd], db_file=db_file)
-    if not resp:
+    if resp is None or resp[cmd].empty:
         return []
-    elif "symbol" not in resp[cmd].columns:
-        return []
-    else:
-        return resp[cmd]["symbol"].to_list()
+    return resp[cmd]["symbol"].to_list()
 
 
 def get_from_component(db_file: str, search: List) -> list:
@@ -127,12 +124,9 @@ def get_from_component(db_file: str, search: List) -> list:
     cmd += f"i.name LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
-    if resp[cmd].empty:
+    if resp is None or resp[cmd].empty:
         return []
-    elif "symbol" not in resp[cmd].columns:
-        return []
-    else:
-        return resp[cmd]["symbol"].to_list()
+    return resp[cmd]["symbol"].to_list()
 
 
 def tab_exists(tab: str) -> bool:
@@ -145,15 +139,15 @@ def tab_exists(tab: str) -> bool:
     return True
 
 
-def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
+def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
     # put DataFrame into sql at table=tab
     # if description table exists, writes first to 'tab_desc'
     # takes from DataFrame only columns present in sql table
     # check if tab exists!
     if not tab_exists(tab):
-        return {}
+        return 
     if dat.empty:
-        return {}
+        return
     # all data shall be in capital letters!
     dat = dat.apply(
         lambda x: x.str.upper() if isinstance(x, str) else x  # type: ignore
@@ -167,34 +161,50 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
         tabL = [tab]
 
     # merge with what we already know
-    known = get(
+    known = query(
         db_file=db_file,
-        tab=tabL[-1],
-        get=["%"],
-        search=dat.loc[:, "hash"].tolist(),
-        cols=["hash"],
-    )["hash"]
-    # remove from DataFrame dat all rows where hash and date column is equal
-    # to known DataFrame
-    if known.iloc[0, 0] != "":
-        dat = dat.loc[
-            ~(dat.hash.isin(known.hash) & dat.date.isin(known.date)), :
-        ].reset_index(drop=True)
-    if dat.empty:
-        return {"duplicaton": dat}
+        tab=tab,
+        symbol=dat.loc[:, "symbol"].tolist(),
+        from_date=date(1900, 1, 1),
+        to_date=date.today(),
+    )
+    if known is not None and not known.empty:
+        known["hash"] = hash_table(known, tab)  # add hash column
 
-    for t in tabL:
-        sql_columns = tab_columns(t, db_file)
-        d = dat.loc[:, [c in sql_columns for c in dat.columns]]
-        # do not write empty or NaNs
-        d = d.dropna()
-        resp = __write_table__(
-            dat=d,
-            tab=t,
-            db_file=db_file,
-        )
-        if not resp:
-            return resp
+        # remove from DataFrame all rows where hash and date
+        # column is equal to known DataFrame
+        comp = dat.reindex(columns=known.columns)  # align columns
+        comp = comp.merge(known, how="left", on=["hash"], suffixes=("", "_known"))
+        # fill new data with what already known
+        for c in known.columns:
+            if not re.search("(date)|(val)|(symbol)|(name)|(hash)", c):
+                comp[c] = comp[c].fillna(comp[c + "_known"])
+        comp = comp.reindex(columns=known.columns)
+        comp = comp.astype(known.dtypes)
+        comp = comp.merge(known, how="outer", indicator=True)
+        new = comp.loc[comp["_merge"] == "left_only"]
+        rm = comp.loc[comp["_merge"] == "right_only"]
+    else:
+        new = dat
+        rm = None
+
+    if not new.empty:
+        for t in tabL:
+            if sql_columns := tab_columns(t, db_file):
+                d = new.loc[:, [c in sql_columns for c in new.columns]]
+            else:
+                return None
+            resp = __write_table__(
+                dat=d,
+                tab=t,
+                db_file=db_file,
+            )
+            if not resp:
+                return
+            # delete asset, do not affect DESC items
+            if not re.search("DESC", t) and rm:
+                d = rm.loc[:, [c in sql_columns for c in rm.columns]]
+                resp = rm_asset(tab=t, dat=d, db_file=db_file)
 
     ####
     # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
@@ -215,7 +225,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Dict:
 
 def __write_table__(
     dat: pd.DataFrame, tab: str, db_file: str
-) -> Dict[str, pd.DataFrame]:
+) -> Union[None, Dict[str, pd.DataFrame]]:
     """writes DataFrame to SQL table 'tab'"""
     records = list(dat.astype("string").to_records(index=False))
     cmd = [
@@ -265,8 +275,8 @@ def get(
         cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
         cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search])
         cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
-        resp_col = __execute_sql__([cmd], db_file)[cmd]
-        resp[c] = resp_col.drop_duplicates()
+        if resp_col := __execute_sql__([cmd], db_file):
+            resp[c] = resp_col[cmd].drop_duplicates()
     return resp
 
 
@@ -314,7 +324,27 @@ def __split_list__(lst: str, nel: int) -> list:
     return cmd_split
 
 
-def rm(tab: str, symbol: str, db_file: str) -> None:
+def rm_asset(
+    tab: str, dat: pd.DataFrame, db_file: str
+) -> Union[None, Dict[str, pd.DataFrame]]:
+    records = list(dat.astype("string").to_records(index=False))
+    cmd = []
+    for values_list, col in records, dat.columns:
+        cmd.append(
+            [
+                f"""DELETE FROM {tab} WHERE (
+                {col} = '{values_list}'
+            """
+                for col in dat.columns
+            ]
+        )
+
+    return __execute_sql__(cmd, db_file)
+
+
+def rm_all(
+    tab: str, symbol: str, db_file: str
+) -> Union[None, Dict[str, pd.DataFrame]]:
     """
     Remove all instances to asset
     remove from given tab, from tab+_DESC and from COMPONENTS
@@ -338,19 +368,16 @@ def rm(tab: str, symbol: str, db_file: str) -> None:
     cmd += [f"DELETE FROM COMPONENTS WHERE stock_hash='{hash}'"]
     cmd += [f"DELETE FROM {tab}_DESC WHERE hash='{hash}'"]
 
-    resp = __execute_sql__(cmd, db_file)
-
-    return
+    return __execute_sql__(cmd, db_file)
 
 
 def tab_columns(tab: str, db_file: str) -> List[str]:
     """return list of columns for table"""
-    sql_cmd = [f"pragma table_info({tab})"]
-    resp = __execute_sql__(sql_cmd, db_file)[sql_cmd[0]]
-    if "name" not in list(resp):
-        # table dosen't exists
+    sql_cmd = f"pragma table_info({tab})"
+    resp = __execute_sql__([sql_cmd], db_file)
+    if not resp or resp[sql_cmd] is None or "name" not in list(resp[sql_cmd]):
         return []
-    return resp["name"].to_list()
+    return resp[sql_cmd]["name"].to_list()
 
 
 def check_sql(db_file: str) -> bool:
@@ -384,7 +411,9 @@ def check_sql(db_file: str) -> bool:
     return True
 
 
-def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
+def __execute_sql__(
+    script: list, db_file: str
+) -> Union[None, Dict[str, pd.DataFrame]]:
     """Execute provided SQL commands.
     If db returns anything write as dict {command: respose as pd.DataFrame}
     Split cmd if logic tree exceeds 500 (just in case as limit is 1000)
@@ -395,9 +424,9 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
 
     Returns:
         Dict: dict of response from sql
-            {command: response in form of pd.DataFrame}
+            {command: response in form of pd.DataFrame (may be empty)}
             or
-            {} in case of failure
+            None in case of failure
     """
     ans = {}
     cmd = ""
@@ -419,25 +448,27 @@ def __execute_sql__(script: list, db_file: str) -> Dict[str, pd.DataFrame]:
                     colnames = [c[0] for c in cur.description]
                     if cmd in ans.keys():
                         ans[cmd] = pd.concat(
-                            [ans[cmd].fillna(''),
-                            pd.DataFrame(a, columns=colnames).fillna('')],
+                            [
+                                ans[cmd].fillna(""),
+                                pd.DataFrame(a, columns=colnames).fillna(""),
+                            ],
                             ignore_index=True,
                         )
                     else:
                         ans[cmd] = pd.DataFrame(a, columns=colnames)
                 else:
-                    ans[cmd] = pd.DataFrame([""])
+                    ans[cmd] = pd.DataFrame()
         con.commit()
         return ans
     except sqlite3.IntegrityError as err:
         print("In command:")
         print(cmd)
         print(err)
-        return {}
+        return
     except sqlite3.Error as err:
         print("SQL operation failed:")
         print(err)
-        return {}
+        return
     finally:
         cur.close()  # type: ignore
         con.close()  # type: ignore
@@ -476,7 +507,7 @@ def __create_sql__(db_file: str) -> bool:
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
     status = __execute_sql__(sql_cmd, db_file)
 
-    if status == {} or status[sql_cmd[-1]]["tbl_name"].to_list() != list(
+    if status is None or status[sql_cmd[-1]]["tbl_name"].to_list() != list(
         sql_scheme.keys()
     ):
         if os.path.isfile(db_file):

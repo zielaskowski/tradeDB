@@ -1,10 +1,9 @@
-import locale
 import re
 import sys
 import os
 import asyncio
 
-from contextlib import contextmanager
+
 from datetime import datetime as dt
 from datetime import date
 import time
@@ -20,7 +19,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup as bs
 from playwright.async_api import async_playwright
 
-from workers.common import set_header
+from workers.common import set_header, convert_date
 
 """function to manage apis:
     - stooq: not really an API, but web scrapping
@@ -247,57 +246,26 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
 
         # some basic formatting: str_to_lower
         pdTab.rename(str.lower, axis="columns", inplace=True)
-        # rename polish to english
+        # rename columns
         pdTab.rename(
-            columns={"nazwa": "name", "kurs": "val", "data": "date", "wolumen": "vol","zamknięcie": "val"},
+            columns={"nazwa": "name", 
+                     "kurs": "val", 
+                     "data": "date", 
+                     "wolumen": "vol",
+                     "kapitalizacja (mln)":"vol",
+                     "zamknięcie": "val",
+                     "last": "val",
+                     "close": "val"},
             inplace=True,
         )
-        # rename columns (Last->val or Close->val),
-        pdTab.rename(columns={"last": "val", "close": "val"}, inplace=True)
+        # drop duplicated columns
+        # i.e. change is in percent and in absolute value
+        pdTab = pdTab.loc[:,~pdTab.columns.duplicated()]
         # convert dates
-        pdTab["date"] = __convert_date__(pdTab["date"])
+        pdTab["date"] = convert_date(pdTab["date"])
 
         data = pd.concat([data, pdTab], ignore_index=True)
     return data
-
-
-def __convert_date__(dates: pd.Series) -> pd.Series:
-    # set date: it's in 'mmm d'(ENG) or 'd mmm'(PL) or 'hh:ss' for today
-    # return '' if format not known
-    @contextmanager
-    def setlocale(*args, **kwargs):
-        # temporary change locale
-        saved = locale.setlocale(locale.LC_ALL)
-        yield locale.setlocale(*args, **kwargs)
-        locale.setlocale(locale.LC_ALL, saved)
-
-    def date_locale(date: pd.Series, local: str, format: str) -> pd.Series:
-        with setlocale(locale.LC_ALL, local):  # type: ignore
-            return pd.to_datetime(date, errors="coerce", format=format)
-    
-    year = dt.today().strftime("%Y")
-    today = dt.today().strftime('%d %b %Y ')
-    # ignore if no digits in date, probably group name
-    # possibly also nan
-    dates = dates.apply(lambda x: x if not pd.isna(x) else '1 Sty 1900')
-    dates = dates.apply(lambda x: x if re.match(r"\d+", x) else '1 Sty 1900')
-
-    d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y %H:%M")  # hh:ss
-    d2 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 24 Feb
-    d3 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
-    d4 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
-    d5 = date_locale(dates, "pl_PL.utf8", "%d %b %Y")  # 22 Lut 2023
-
-    d1 = d1.fillna(d2)
-    d1 = d1.fillna(d3)
-    d1 = d1.fillna(d4)
-    d1 = d1.fillna(d5)
-    d1 = d1.dt.date
-    d1 = d1.fillna(" ")
-    # if date not recognized
-    if not d1.loc[d1 == " "].empty:
-        sys.exit(f'date format not recognized:\n{dates.loc[d1==" "]}')
-    return d1
 
 
 def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
