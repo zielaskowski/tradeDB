@@ -66,39 +66,41 @@ class Trader:
                 if v["description"]["region"] in region
             }
 
-        for key, region in sector_dat.items():  # type: ignore
-            print(f"...downloading indexes for {key}")
-            dat = api.stooq(
-                sector_id=region["api"]["id"],  # type: ignore
-                sector_grp=region["api"]["group"],  # type: ignore
-                from_date=from_date,
-                to_date=to_date,
-            )
-            dat = self.__describe_table__(
-                dat=dat,
-                tab="INDEXES",
-                description=region["description"],  # type: ignore
-            )
-            resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
-            if not resp:
-                sys.exit(f"FATAL: wrong data for {region}")
-            for s, c in dat.loc[:, ["symbol", "country"]].to_records(index=False):
-                datComp = api.stooq(
-                    component=s,
+            for key, region in sector_dat.items():  # type: ignore
+                print(f"...downloading indexes for {key}")
+                dat = api.stooq(
+                    sector_id=region["api"]["id"],  # type: ignore
+                    sector_grp=region["api"]["group"],  # type: ignore
                     from_date=from_date,
                     to_date=to_date,
                 )
-                if datComp.empty:
-                    # no components for index
-                    continue
-                datComp = self.__describe_table__(
-                    dat=datComp, tab="STOCK", description={"indexes": s, "country": c}
+                dat = self.__describe_table__(
+                    dat=dat,
+                    tab="INDEXES",
+                    description=region["description"],  # type: ignore
                 )
-                resp = sql.put(dat=datComp, tab="STOCK", db_file=self.db)
+                resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
                 if not resp:
-                    sys.exit(f"FATAL: wrong data for {s}")
+                    sys.exit(f"FATAL: wrong data for {region}")
+                with alive_bar(len(dat.index)) as bar:
+                    for s, c in dat.loc[:, ["symbol", "country"]].to_records(index=False):
+                        datComp = api.stooq(
+                            component=s,
+                            from_date=from_date,
+                            to_date=to_date,
+                        )
+                        if datComp.empty:
+                            # no components for index
+                            continue
+                        datComp = self.__describe_table__(
+                            dat=datComp, tab="STOCK", description={"indexes": s, "country": c}
+                        )
+                        resp = sql.put(dat=datComp, tab="STOCK", db_file=self.db)
+                        if not resp:
+                            sys.exit(f"FATAL: wrong data for {s}")
+                    bar()
 
-    def __read_sectors__(self, address:Dict) -> Dict:
+    def __read_sectors__(self, address: Dict) -> Dict:
         try:
             for k in address:
                 address[k]["data"] = read_json(address[k]["file"])  # type: ignore
@@ -234,9 +236,12 @@ class Trader:
                 arg=kwargs.get("tab", ""), arg_name="tab", opts=opts, opts_direct=True
             )
         ):
-            return ""
+            return
         tab = tab[0]
-
+        # GEO tab must be treated specially: update dosen't make sens
+        if "GEO" in tab:
+            update_dates = False
+            update_symbols = False
         # symbol
         if not (
             symbol := self.__check_arg__(
@@ -246,15 +251,18 @@ class Trader:
                 tab=tab,
             )
         ):
-            return ""
+            return
 
         # name
         if not (
             name := self.__check_arg__(
-                arg=kwargs.get("name", "%"), arg_name="name", opts=["name"], tab=tab+'_DESC'
+                arg=kwargs.get("name", "%"),
+                arg_name="name",
+                opts=["name"],
+                tab=tab + "_DESC",
             )
         ):
-            return ""
+            return
         if "%" not in name:
             symbol = sql.get(
                 db_file=self.db,
@@ -273,12 +281,13 @@ class Trader:
                 tab="INDEXES_DESC",
             )
         ):
-            return pd.DataFrame([""])
+            return pd.DataFrame()
         if "%" not in component:
             if tab != "STOCK":
                 print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
+                return pd.DataFrame()
             else:
-                symbol = sql.get_from_component(db_file=self.db, search=component)
+                symbol = sql.index_components(db_file=self.db, search=component)
 
         # filter countries
         if not (
@@ -289,7 +298,7 @@ class Trader:
                 tab="GEO",
             )
         ):
-            return pd.DataFrame([""])
+            return pd.DataFrame()
         if "%" not in country:
             symbol = sql.get_from_geo(
                 db_file=self.db, tab=tab, search=country, what="country"
@@ -306,7 +315,7 @@ class Trader:
                 opts_direct=True,
             )
         ):
-            return ""
+            return
         if "%" not in region and not update_symbols:
             symbol = sql.get_from_geo(
                 db_file=self.db, tab=tab, search=region, what="region"
@@ -325,7 +334,7 @@ class Trader:
                 opts_direct=True,
             )
         ):
-            return ""
+            return
 
         # currency
         if not (
@@ -336,12 +345,12 @@ class Trader:
                 tab="GEO",
             )
         ):
-            return ""
+            return
 
         # dates
         # if not selected particular names, display last date only
         # and do not update
-        if not any([a in ['name', "symbol"] for a in kwargs.keys()]):
+        if not any([a in ["name", "symbol"] for a in kwargs.keys()]):
             from_date, to_date = self.__set_dates__()
             if update_dates:
                 print("Date range changed to last available data.")
@@ -418,19 +427,6 @@ class Trader:
             cols=["symbol"],
         )["symbol"]
 
-        # refuse to update if symbol=='%'
-        # and requested dates outside what available and not GEO
-        min_dates["from_date"].min
-        max_dates["to_date"].max
-        if "%" in symbol and (
-            min_dates["from_date"].min() > from_date
-            or max_dates["to_date"].max() < to_date
-        ):
-            print("Blocked updating data for all symbols.")
-            print("Be more specific which symbols you want to update.")
-            print("Consider also using option 'update_symbols'")
-            return
-
         symbolDF = sql.get(
             db_file=self.db,
             tab=tab + "_DESC",
@@ -438,12 +434,15 @@ class Trader:
             search=symbol,
             cols=["symbol"],
         )["symbol"]
-        print("...updating dates")
+        info = print
         with alive_bar(len(symbolDF)) as bar:
             for s, n in symbolDF.itertuples(index=False, name=None):
                 min_date = min_dates.loc[min_dates["symbol"] == s, "from_date"].min()  # type: ignore
                 max_date = max_dates.loc[max_dates["symbol"] == s, "to_date"].max()  # type: ignore
                 if min_date > from_date or max_date < to_date:  # type: ignore
+                    if info:
+                        info("...updating dates")
+                        info = None
                     dat = api.stooq(
                         from_date=min(from_date, min_date),
                         to_date=max(to_date, max_date),
@@ -515,7 +514,10 @@ class Trader:
         if tab == "CURRENCY":
             dat["iso2"] = description["iso2"]
             return dat
-
+        # for some dates the asset value can be missing
+        # i.e. when stock is closed due to holidays
+        # fill with zero to keep STOCK or INDEX in sql
+        dat['val'].fillna(0, inplace=True)
         # extract countries
         ######
         # for indexes, country may be within name
@@ -530,7 +532,7 @@ class Trader:
 
         # hash table
         ######
-        dat["hash"] = hash_table(dat,tab)
+        dat["hash"] = hash_table(dat, tab)
 
         # get dates
         ######
@@ -547,13 +549,15 @@ class Trader:
                     search=[h],
                     cols=["hash"],
                     db_file=self.db,
-                )['hash']
+                )["hash"]
                 if date_sql.empty:
                     minmax_date += [func(dat.loc[dat["hash"] == h, "date"])]
                 else:
                     minmax_date += [
-                        func(dat.loc[dat["hash"] == h, "date"].to_list() + [date_sql.iloc[0, 0]
-                ])
+                        func(
+                            dat.loc[dat["hash"] == h, "date"].to_list()  # type: ignore
+                            + [date_sql.iloc[0, 0]]
+                        )
                     ]
             return minmax_date
 

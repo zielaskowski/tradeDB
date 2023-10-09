@@ -75,11 +75,15 @@ def query(
                     """
 
     resp = __execute_sql__([cmd], db_file)
-    if resp:
-        return resp[cmd]
-    else:
+    if resp is None or resp[cmd].empty:
         return
-
+    else:
+        resp = resp[cmd]
+        if tab == "STOCK":
+            resp["indexes"] = stock_index(
+                db_file=db_file, search=resp.loc[:, "name"].to_list()
+            )
+        return resp.drop_duplicates()
 
 def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
     """
@@ -106,7 +110,7 @@ def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
     return resp[cmd]["symbol"].to_list()
 
 
-def get_from_component(db_file: str, search: List) -> list:
+def index_components(db_file: str, search: List) -> list:
     """
     Return components of given index name.
     """
@@ -121,6 +125,29 @@ def get_from_component(db_file: str, search: List) -> list:
     cmd += "("
     cmd += "".join([f"i.name LIKE '" + s + "' OR " for s in search])
     cmd += f"i.name LIKE 'none' "  # just to finish last OR
+    cmd += ")"
+    resp = __execute_sql__([cmd], db_file=db_file)
+    if resp is None or resp[cmd].empty:
+        return []
+    return resp[cmd]["symbol"].to_list()
+
+
+def stock_index(db_file: str, search: List) -> list:
+    """
+    Return index(es) where stock belongs.
+    Use stock name
+    """
+    cmd = f"""SELECT
+                i.name
+            FROM
+                STOCK_DESC s
+            INNER JOIN INDEXES_DESC i ON i.hash=c.indexes_hash
+            INNER JOIN COMPONENTS c on s.hash = c.stock_hash
+                WHERE 
+        """
+    cmd += "("
+    cmd += "".join([f"s.name LIKE '" + s + "' OR " for s in search])
+    cmd += f"s.name LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp is None or resp[cmd].empty:
@@ -144,7 +171,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
     # takes from DataFrame only columns present in sql table
     # check if tab exists!
     if not tab_exists(tab):
-        return 
+        return
     if dat.empty:
         return
     # all data shall be in capital letters!
@@ -170,8 +197,8 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
     if known is not None and not known.empty:
         known["hash"] = hash_table(known, tab)  # add hash column
 
-        # remove from DataFrame all rows where hash and date
-        # column is equal to known DataFrame
+        # compare new data with what present in sql
+        # split into new data to be written to sql and old data to be removed from sql
         comp = dat.reindex(columns=known.columns)  # align columns
         comp = comp.merge(known, how="left", on=["hash"], suffixes=("", "_known"))
         # fill new data with what already known
@@ -237,7 +264,6 @@ def __write_table__(
         """
         for values_list in records
     ]
-    cmd = [re.sub('<NA>','NULL',str(c)) for c in cmd]
     return __execute_sql__(cmd, db_file)
 
 
@@ -335,17 +361,17 @@ def rm_asset(
     cmd = []
     for row in records:
         cmd.append(
-                f"DELETE FROM {tab} WHERE ("+
-                (' AND ').join([f"{dat.columns[i]} = '{row[i]}'" for i in range(len(row))])+
-                ' )'
+            f"DELETE FROM {tab} WHERE ("
+            + (" AND ").join(
+                [f"{dat.columns[i]} = '{row[i]}'" for i in range(len(row))]
+            )
+            + " )"
         )
 
     return __execute_sql__(cmd, db_file)
 
 
-def rm_all(
-    tab: str, symbol: str, db_file: str
-) -> Union[None, Dict[str, pd.DataFrame]]:
+def rm_all(tab: str, symbol: str, db_file: str) -> Union[None, Dict[str, pd.DataFrame]]:
     """
     Remove all instances to asset
     remove from given tab, from tab+_DESC and from COMPONENTS
@@ -412,9 +438,7 @@ def check_sql(db_file: str) -> bool:
     return True
 
 
-def __execute_sql__(
-    script: list, db_file: str
-) -> Union[None, Dict[str, pd.DataFrame]]:
+def __execute_sql__(script: list, db_file: str) -> Union[None, Dict[str, pd.DataFrame]]:
     """Execute provided SQL commands.
     If db returns anything write as dict {command: respose as pd.DataFrame}
     Split cmd if logic tree exceeds 500 (just in case as limit is 1000)
@@ -431,6 +455,9 @@ def __execute_sql__(
     """
     ans = {}
     cmd = ""
+    # when writing pnada as dictionary
+    # NULL is written as <NA>, sql needs NULL
+    script = [re.sub("<NA>", "NULL", str(c)) for c in script]
     # Foreign key constraints are disabled by default,
     # so must be enabled separately for each database connection.
     script = ["PRAGMA foreign_keys = ON"] + script

@@ -32,12 +32,7 @@ header = set_header(STOOQ_HEADER)
 
 
 def stooq(
-    from_date: date,
-    to_date: date,
-    sector_id=0,
-    sector_grp="",
-    symbol="",
-    component=""
+    from_date: date, to_date: date, sector_id=0, sector_grp="", symbol="", component=""
 ) -> pd.DataFrame:
     """
     Get data from stooq web page
@@ -55,7 +50,9 @@ def stooq(
     from_dateS = dt.strftime(from_date, "%Y%m%d")  # type: ignore
 
     if sector_id:  # indexes
-        url = f"https://stooq.pl/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d={from_dateS}"
+        url = (
+            f"https://stooq.pl/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d={from_dateS}"
+        )
         # n: long/short names
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
@@ -94,7 +91,7 @@ def ecb(
     ecb = sdmx.Request("ECB")
 
     # available symbols
-    exrDSD = ecb.dataflow("EXR").dataflow.EXR.structure
+    exrDSD = ecb.dataflow("EXR").dataflow.EXR.structure # type: ignore
     exrCMP = exrDSD.dimensions.components
     all_symbols = sdmx.to_pandas(
         exrCMP[1].local_repesentation.enumerated
@@ -120,10 +117,14 @@ def ecb(
 def __captcha__(page: bs) -> bool:
     # check if we have captcha
     # captcha is trigered with bandwith limit or hit limit
-    if all([page.find(string=txt) is None 
-            for txt in ["The data has been hidden","Dane zostały ukryte"]]):
+    if all(
+        [
+            page.find(string=txt) is None
+            for txt in ["The data has been hidden", "Dane zostały ukryte"]
+        ]
+    ):
         return False
-    
+
     while True:
         # display captcha
         url = f"https://stooq.pl/q/l/s/i/?{int(time.time()*1000)}"
@@ -236,7 +237,7 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
         if htmlTab is None:
             break
 
-        pdTab = pd.read_html(io.StringIO(htmlTab.prettify()))[0]
+        pdTab = pd.read_html(io.StringIO(bs.prettify(htmlTab)))[0]  # type: ignore
 
         if pdTab.empty:
             break
@@ -248,19 +249,21 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
         pdTab.rename(str.lower, axis="columns", inplace=True)
         # rename columns
         pdTab.rename(
-            columns={"nazwa": "name", 
-                     "kurs": "val", 
-                     "data": "date", 
-                     "wolumen": "vol",
-                     "kapitalizacja (mln)":"vol",
-                     "zamknięcie": "val",
-                     "last": "val",
-                     "close": "val"},
+            columns={
+                "nazwa": "name",
+                "kurs": "val",
+                "data": "date",
+                "wolumen": "vol",
+                "kapitalizacja (mln)": "vol",
+                "zamknięcie": "val",
+                "last": "val",
+                "close": "val",
+            },
             inplace=True,
         )
         # drop duplicated columns
         # i.e. change is in percent and in absolute value
-        pdTab = pdTab.loc[:,~pdTab.columns.duplicated()]
+        pdTab = pdTab.loc[:, list(~pdTab.columns.duplicated())]
         # convert dates
         pdTab["date"] = convert_date(pdTab["date"])
 
