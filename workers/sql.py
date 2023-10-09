@@ -108,8 +108,7 @@ def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
 
 def get_from_component(db_file: str, search: List) -> list:
     """
-    Return components of given symbol.
-    Limit components to given table only
+    Return components of given index name.
     """
     cmd = f"""SELECT
                 s.symbol
