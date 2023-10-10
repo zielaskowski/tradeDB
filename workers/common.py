@@ -70,13 +70,13 @@ def biz_date(
     if isinstance(from_date, date):
         from_date = dt(from_date.year, from_date.month, from_date.day)
     if isinstance(to_date, date):
-        to_date = dt(to_date.year, to_date.month, to_date.day) + timedelta(days=1)
+        to_date = dt(to_date.year, to_date.month, to_date.day)
     if isinstance(from_date, str):
         from_datePD = pd.to_datetime(from_date)
         from_date = dt(from_datePD.year, from_datePD.month, from_datePD.day)
     if isinstance(to_date, str):
         to_datePD = pd.to_datetime(to_date)
-        to_date = dt(to_datePD.year, to_datePD.month, to_datePD.day) + timedelta(days=1)
+        to_date = dt(to_datePD.year, to_datePD.month, to_datePD.day)
 
     # convert date to MST and substract one day
     # this way we can be sure all stocks are already closed

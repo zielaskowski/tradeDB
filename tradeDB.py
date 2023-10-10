@@ -83,7 +83,9 @@ class Trader:
                 if not resp:
                     sys.exit(f"FATAL: wrong data for {region}")
                 with alive_bar(len(dat.index)) as bar:
-                    for s, c in dat.loc[:, ["symbol", "country"]].to_records(index=False):
+                    for s, c in dat.loc[:, ["symbol", "country"]].to_records(
+                        index=False
+                    ):
                         datComp = api.stooq(
                             component=s,
                             from_date=from_date,
@@ -93,12 +95,14 @@ class Trader:
                             # no components for index
                             continue
                         datComp = self.__describe_table__(
-                            dat=datComp, tab="STOCK", description={"indexes": s, "country": c}
+                            dat=datComp,
+                            tab="STOCK",
+                            description={"indexes": s, "country": c},
                         )
                         resp = sql.put(dat=datComp, tab="STOCK", db_file=self.db)
                         if not resp:
                             sys.exit(f"FATAL: wrong data for {s}")
-                    bar()
+                        bar()
 
     def __read_sectors__(self, address: Dict) -> Dict:
         try:
@@ -517,7 +521,7 @@ class Trader:
         # for some dates the asset value can be missing
         # i.e. when stock is closed due to holidays
         # fill with zero to keep STOCK or INDEX in sql
-        dat['val'].fillna(0, inplace=True)
+        dat["val"].fillna(0, inplace=True)
         # extract countries
         ######
         # for indexes, country may be within name
@@ -580,9 +584,9 @@ class Trader:
         names = names.apply(lambda x: re.sub(r"WIG.*$", x + r" - POLAND", x))
         names = names.apply(lambda x: re.sub(r"ATX.*$", r"ATX - AUSTRIA", x))
 
-        countries = sql.get(tab="GEO", get=["country"], search=["%"], db_file=self.db)[
-            "country"
-        ]["country"]
+        countries = sql.get(
+            tab="GEO", get=["country"], search=["%"], db_file=self.db, cols=["country"]
+        )["country"]['country'].to_list()
 
         split = [re.split(" - ", n) for n in names]
         name_short = [s[0] for s in split]

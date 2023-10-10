@@ -43,7 +43,7 @@ def query(
     """
     if not check_sql(db_file):
         return
-
+    symbol = __escape_quote__(symbol)
     desc = "_DESC"
     if tab == "GEO":
         desc = ""
@@ -79,11 +79,13 @@ def query(
         return
     else:
         resp = resp[cmd]
-        if tab == "STOCK":
-            resp["indexes"] = stock_index(
-                db_file=db_file, search=resp.loc[:, "name"].to_list()
-            )
+        if tab == "STOCK" and 'name' in resp.columns:
+            idx = stock_index(db_file=db_file, search=resp.loc[:, "name"].to_list())
+            if idx is not None:
+                resp = resp.merge(idx, how="left", left_on="name", right_on="stock")
+                resp.drop(columns=["stock"], inplace=True)
         return resp.drop_duplicates()
+
 
 def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
     """
@@ -92,6 +94,7 @@ def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
     Args:
         what: which column to match
     """
+    search = __escape_quote__(search)
     cmd = f"""SELECT
                 s.symbol
             FROM
@@ -122,6 +125,7 @@ def index_components(db_file: str, search: List) -> list:
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
                 WHERE 
         """
+    search = __escape_quote__(search)
     cmd += "("
     cmd += "".join([f"i.name LIKE '" + s + "' OR " for s in search])
     cmd += f"i.name LIKE 'none' "  # just to finish last OR
@@ -132,27 +136,29 @@ def index_components(db_file: str, search: List) -> list:
     return resp[cmd]["symbol"].to_list()
 
 
-def stock_index(db_file: str, search: List) -> list:
+def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
     """
     Return index(es) where stock belongs.
-    Use stock name
+    Use stock name in search
+    Return DataFrame with columns [indexes] and [stock]
     """
     cmd = f"""SELECT
-                i.name
+                i.name AS 'indexes', s.name AS 'stock'
             FROM
                 STOCK_DESC s
             INNER JOIN INDEXES_DESC i ON i.hash=c.indexes_hash
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
                 WHERE 
         """
+    search = __escape_quote__(search)
     cmd += "("
     cmd += "".join([f"s.name LIKE '" + s + "' OR " for s in search])
     cmd += f"s.name LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp is None or resp[cmd].empty:
-        return []
-    return resp[cmd]["symbol"].to_list()
+        return
+    return resp[cmd]
 
 
 def tab_exists(tab: str) -> bool:
@@ -235,7 +241,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
     ####
     # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
     ####
-    if "indexes" in dat.columns:
+    if "indexes" in new.columns:
         hash = get(
             db_file=db_file,
             tab="INDEXES_DESC",
@@ -258,6 +264,7 @@ def __write_table__(
 ) -> Union[None, Dict[str, pd.DataFrame]]:
     """writes DataFrame to SQL table 'tab'"""
     records = list(dat.astype("string").to_records(index=False))
+    records = [tuple(__escape_quote__(r)) for r in records]
     cmd = [
         f"""INSERT OR REPLACE INTO {tab} {tuple(dat.columns)}
             VALUES {values_list}
@@ -279,9 +286,10 @@ def get(
     Args:
         tab: table to search
         get: column name to extract (use '%' for all columns)
-        search: what to get (use '*' for everything)
+        search: what to get (use '%' for everything)
         cols: columns used for searching
     """
+    search = __escape_quote__(search)
     resp = {}
     all_cols = tab_columns(tab=tab, db_file=db_file)
     tab = tab.upper()
@@ -323,20 +331,20 @@ def __split_cmd__(script: list) -> List[List]:
             r"(\([^\()]*\))"  # everything (without parenthesis) between parenthesis
         )
         cmd3_re = r"((?<=\)).+$)"  # everything from last parenthesis to end
-        res = re.findall(f"{cmd1_re}|{cmd2_re}|{cmd3_re}", cmd)
-        res = ["".join(t) for t in res]  # remove empty elements from list
-        if len(res) == 3:
-            lenOR = len(re.findall(" OR ", res[1]))
-            lenAND = len(re.findall(" AND ", res[1]))
-            if lenAND != 0:
-                # not possible to split AND chain
-                if lenAND + lenOR > 500:
-                    sys.exit("FATAL: sql cmd exceeded length limit")
-            if lenOR > 500:
-                cmd_new = [res[0] + c + res[2] for c in __split_list__(res[1], 500)]
-                resp.append(cmd_new)
-            else:
-                resp.append([cmd])
+        reMatch = re.findall(f"{cmd1_re}|{cmd2_re}|{cmd3_re}", cmd)
+        reMatch = ["".join(t) for t in reMatch]  # remove empty elements from list
+        lenOR = len(re.findall(" OR ", reMatch[1])) if len(reMatch) > 1 else 0
+        lenAND = len(re.findall(" AND ", reMatch[1])) if len(reMatch) > 1 else 0
+        if lenAND != 0:
+            # not possible to split AND chain
+            if lenAND + lenOR > 500:
+                sys.exit("FATAL: sql cmd exceeded length limit")
+        if lenOR > 500:
+            reMatch.append("") if len(reMatch) < 3 else None
+            cmd_new = [
+                reMatch[0] + c + reMatch[2] for c in __split_list__(reMatch[1], 500)
+            ]
+            resp.append(cmd_new)
         else:
             resp.append([cmd])
     return [r for r in resp if r]
@@ -346,7 +354,7 @@ def __split_list__(lst: str, nel: int) -> list:
     """
     Split list into parts with nel elements each (except last)
     """
-    lst_split = re.split("OR", lst)
+    lst_split = re.split(" OR ", lst)
     n = (len(lst_split) // nel) + 1
     cmd_split = [" OR ".join(lst_split[i * nel : (i + 1) * nel]) for i in range(n)]
     # make sure each part starts and ends with parenthesis
@@ -358,6 +366,7 @@ def rm_asset(
     tab: str, dat: pd.DataFrame, db_file: str
 ) -> Union[None, Dict[str, pd.DataFrame]]:
     records = list(dat.astype("string").to_records(index=False))
+    records = [tuple(__escape_quote__(r)) for r in records]
     cmd = []
     for row in records:
         cmd.append(
@@ -430,7 +439,7 @@ def check_sql(db_file: str) -> bool:
     sql_scheme = read_json(SQL_file)
     for i in range(len(sql_scheme)):
         tab = list(sql_scheme.keys())[i]
-        scheme_cols = [k for k in sql_scheme[tab].keys() if k != "FOREIGN"]
+        scheme_cols = [k for k in sql_scheme[tab].keys() if k not in ["FOREIGN", "UNIQUE"]]
         if tab_columns(tab, db_file) != scheme_cols:
             print(f"Wrong DB scheme in file '{db_file}'.")
             print(f"Problem with table '{tab}'")
@@ -520,17 +529,24 @@ def __create_sql__(db_file: str) -> bool:
     # create tables query for db
     sql_cmd = []
     for tab in sql_scheme:
-        tab_cmd = f"CREATE TABLE {tab}("
+        tab_cmd = f"CREATE TABLE {tab} ("
         for col in sql_scheme[tab]:
-            if col != "FOREIGN":
+            if col not in ["FOREIGN", "UNIQUE"]:
                 tab_cmd += f"{col} {sql_scheme[tab][col]}, "
-            else:  # FOREIGN
+            elif col == "FOREIGN":  # FOREIGN
                 for foreign in sql_scheme[tab][col]:
                     k, v = list(foreign.items())[0]
                     tab_cmd += f"FOREIGN KEY({k}) REFERENCES {v}, "
         tab_cmd = re.sub(",[^,]*$", "", tab_cmd)  # remove last comma
-        tab_cmd += ")"
+        tab_cmd += ") "
         sql_cmd.append(tab_cmd)
+        if (
+            unique_cols := tuple(sql_scheme[tab]["UNIQUE"])
+            if "UNIQUE" in sql_scheme[tab].keys()
+            else ""
+        ):
+            tab_cmd = f"CREATE UNIQUE INDEX uniqueRow ON {tab} {unique_cols}"
+            sql_cmd.append(tab_cmd)
     # last command to check if all tables were created
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
     status = __execute_sql__(sql_cmd, db_file)
@@ -594,3 +610,10 @@ def __geo_tab__() -> pd.DataFrame:
     geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")
     geo.fillna("", inplace=True)
     return geo
+
+
+def __escape_quote__(txt: list[str]) -> List[str]:
+    """
+    escape quotes in a list of strings
+    """
+    return [re.sub(r"'", r"''", str(txt)) for txt in txt if txt is not None]

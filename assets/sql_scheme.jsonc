@@ -94,12 +94,14 @@
   "COMPONENTS": {
     //** connection between indexes and stock
     //** one stock can be in more then one index
+    //** UNIQUE rows
     "indexes_hash": "TEXT",
-    "stock_hash": "TEXT PRIMARY KEY",
+    "stock_hash": "TEXT",
     "FOREIGN": [
       { "indexes_hash": "INDEXES_DESC(hash)" },
       { "stock_hash": "STOCK_DESC(hash)" }
-    ]
+    ],
+    "UNIQUE": [ "indexes_hash", "stock_hash" ]
   },
   //** all prices in SQL are written local currency
   "CURRENCY": {
