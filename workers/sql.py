@@ -79,7 +79,7 @@ def query(
         return
     else:
         resp = resp[cmd]
-        if tab == "STOCK" and 'name' in resp.columns:
+        if tab == "STOCK" and "name" in resp.columns:
             idx = stock_index(db_file=db_file, search=resp.loc[:, "name"].to_list())
             if idx is not None:
                 resp = resp.merge(idx, how="left", left_on="name", right_on="stock")
@@ -204,44 +204,30 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
         known["hash"] = hash_table(known, tab)  # add hash column
 
         # compare new data with what present in sql
-        # split into new data to be written to sql and old data to be removed from sql
-        comp = dat.reindex(columns=known.columns)  # align columns
-        comp = comp.merge(known, how="left", on=["hash"], suffixes=("", "_known"))
+        dat = dat.reindex(columns=known.columns)  # align columns
+        dat = dat.merge(known, how="left", on=["hash"], suffixes=("", "_known"))
         # fill new data with what already known
         for c in known.columns:
             if not re.search("(date)|(val)|(symbol)|(name)|(hash)", c):
-                comp[c] = comp[c].fillna(comp[c + "_known"])
-        comp = comp.reindex(columns=known.columns)
-        comp = comp.astype(known.dtypes)
-        comp = comp.merge(known, how="outer", indicator=True)
-        new = comp.loc[comp["_merge"] == "left_only"]
-        rm = comp.loc[comp["_merge"] == "right_only"]
-    else:
-        new = dat
-        rm = pd.DataFrame()
+                dat[c] = dat[c].fillna(dat[c + "_known"])
 
-    if not new.empty:
-        for t in tabL:
-            if sql_columns := tab_columns(t, db_file):
-                d = new.loc[:, [c in sql_columns for c in new.columns]]
-            else:
-                return None
-            resp = __write_table__(
-                dat=d,
-                tab=t,
-                db_file=db_file,
-            )
-            if not resp:
-                return
-            # delete asset, do not affect DESC items
-            if not re.search("DESC", t) and not rm.empty:
-                d = rm.loc[:, [c in sql_columns for c in rm.columns]]
-                resp = rm_asset(tab=t, dat=d, db_file=db_file)
-
+    # add new data to sql
+    for t in tabL:
+        sql_columns = tab_columns(t, db_file)
+        d = dat.loc[:, [c in sql_columns for c in dat.columns]]
+        resp = __write_table__(
+            dat=d,
+            tab=t,
+            db_file=db_file,
+        )
+        if not resp:
+            return
+    
     ####
     # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
+    # sql will handel unique rows
     ####
-    if "indexes" in new.columns:
+    if "indexes" in dat.columns:
         hash = get(
             db_file=db_file,
             tab="INDEXES_DESC",
@@ -432,14 +418,16 @@ def check_sql(db_file: str) -> bool:
     if not os.path.isfile(db_file):
         print(f"DB file '{db_file}' is missing.")
         print(f"Creating new DB: {db_file}")
-        __create_sql__(db_file=db_file)
+        create_sql(db_file=db_file)
         return False
 
     # check if correct sql
     sql_scheme = read_json(SQL_file)
     for i in range(len(sql_scheme)):
         tab = list(sql_scheme.keys())[i]
-        scheme_cols = [k for k in sql_scheme[tab].keys() if k not in ["FOREIGN", "UNIQUE"]]
+        scheme_cols = [
+            k for k in sql_scheme[tab].keys() if k not in ["FOREIGN", "UNIQUE"]
+        ]
         if tab_columns(tab, db_file) != scheme_cols:
             print(f"Wrong DB scheme in file '{db_file}'.")
             print(f"Problem with table '{tab}'")
@@ -511,7 +499,7 @@ def __execute_sql__(script: list, db_file: str) -> Union[None, Dict[str, pd.Data
         con.close()  # type: ignore
 
 
-def __create_sql__(db_file: str) -> bool:
+def create_sql(db_file: str) -> bool:
     """Creates sql query based on sql_scheme.json and send to db.
     Perform check if created DB is aligned with scheme from sql.json file.
     add GEO tab
@@ -545,7 +533,7 @@ def __create_sql__(db_file: str) -> bool:
             if "UNIQUE" in sql_scheme[tab].keys()
             else ""
         ):
-            tab_cmd = f"CREATE UNIQUE INDEX uniqueRow ON {tab} {unique_cols}"
+            tab_cmd = f"CREATE UNIQUE INDEX uniqueRow_{tab} ON {tab} {unique_cols}"
             sql_cmd.append(tab_cmd)
     # last command to check if all tables were created
     sql_cmd.append("SELECT tbl_name FROM sqlite_master WHERE type='table'")
@@ -556,8 +544,7 @@ def __create_sql__(db_file: str) -> bool:
     ):
         if os.path.isfile(db_file):
             os.remove(db_file)
-        print("DB not created")
-        return False
+        sys.exit("FATAL: DB not created. Possibly 'sql_scheme.jsonc' file corupted.")
 
     # write GEO info
     print("writing GEO info to db...")

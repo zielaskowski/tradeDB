@@ -30,8 +30,11 @@ print(trader.get(tab="STOCK", name="ALLEGRO"))
 print(trader.get(tab="STOCK", name="ALLEGRO", start="01-01-2023"))
 print(trader.get(tab="STOCK", name="pkn"))
 print(trader.get(tab='STOCK', region='east asia', currency='pln'))
-print(trader.get(tab="stock",update_symbols=True,region='east asia'))
+#print(trader.get(tab="stock",update_symbols=True,region='east asia'))
 
+
+# command split:
+# s.name LIKE 'NIPPON TELEGRAPH AND TELEPHONE' OR s.name LIKE
 
 # check requested dates also between max and min date!
 

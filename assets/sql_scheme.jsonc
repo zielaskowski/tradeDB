@@ -34,7 +34,8 @@
     "hash": "TEXT",
     "val": "INTEGER NOT NULL",
     "date": "DATE NOT NULL",
-    "FOREIGN": [{ "hash": "INDEXES_DESC(hash)" }]
+    "FOREIGN": [{ "hash": "INDEXES_DESC(hash)" }],
+    "UNIQUE": ["hash","date"]
   },
   "ETF_DESC": {
     "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
@@ -53,7 +54,8 @@
     "vol": "INTEGER",
     "val": "INTEGER NOT NULL",
     "date": "DATE NOT NULL",
-    "FOREIGN": [{ "hash": "ETF_DESC(hash)" }]
+    "FOREIGN": [{ "hash": "ETF_DESC(hash)" }],
+    "UNIQUE": ["hash","date"]
   },
   "COMODITIES_DESC": {
     "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'ETF'
@@ -69,7 +71,8 @@
     "vol": "INTEGER",
     "val": "INTEGER NOT NULL",
     "date": "DATE NOT NULL",
-    "FOREIGN": [{ "hash": "COMODITIES_DESC(hash)" }]
+    "FOREIGN": [{ "hash": "COMODITIES_DESC(hash)" }],
+    "UNIQUE": ["hash","date"]
   },
 
   "STOCK": {
@@ -77,7 +80,8 @@
     "vol": "INTEGER",
     "val": "INTEGER NOT NULL",
     "date": "DATE NOT NULL",
-    "FOREIGN": [{ "hash": "STOCK_DESC(hash)" }]
+    "FOREIGN": [{ "hash": "STOCK_DESC(hash)" }],
+    "UNIQUE": ["hash","date"]
   },
 
   "STOCK_DESC": {
