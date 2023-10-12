@@ -222,7 +222,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
         )
         if not resp:
             return
-    
+
     ####
     # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
     # sql will handel unique rows
@@ -319,8 +319,11 @@ def __split_cmd__(script: list) -> List[List]:
         cmd3_re = r"((?<=\)).+$)"  # everything from last parenthesis to end
         reMatch = re.findall(f"{cmd1_re}|{cmd2_re}|{cmd3_re}", cmd)
         reMatch = ["".join(t) for t in reMatch]  # remove empty elements from list
-        lenOR = len(re.findall(" OR ", reMatch[1])) if len(reMatch) > 1 else 0
-        lenAND = len(re.findall(" AND ", reMatch[1])) if len(reMatch) > 1 else 0
+        logic_tree = (
+            re.sub(r"'[^']*'", "stock_name", reMatch[1]) if len(reMatch) > 1 else ""
+        )  # AND can be within asset name
+        lenOR = len(re.findall(" OR ", logic_tree)) if len(reMatch) > 1 else 0
+        lenAND = len(re.findall(" AND ", logic_tree)) if len(reMatch) > 1 else 0
         if lenAND != 0:
             # not possible to split AND chain
             if lenAND + lenOR > 500:

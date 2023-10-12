@@ -33,13 +33,9 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 #print(trader.get(tab="stock",update_symbols=True,region='east asia'))
 
 
-# command split:
-# s.name LIKE 'NIPPON TELEGRAPH AND TELEPHONE' OR s.name LIKE
 
 # check requested dates also between max and min date!
 
-# make sure components work correctly: should be possible to have stock in many indexes
-# but what query will do then?
 
 #2. check curencies
 
