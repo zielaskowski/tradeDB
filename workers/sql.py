@@ -44,9 +44,13 @@ def query(
     if not check_sql(db_file):
         return
     symbol = __escape_quote__(symbol)
-    desc = "_DESC"
+    
     if tab == "GEO":
         desc = ""
+        cols = ['country','iso2', 'region']
+    else:
+        desc = "_DESC"
+        cols = ['symbol']
 
     # get tab columns (omit hash)
     if "%" in columns:
@@ -60,13 +64,15 @@ def query(
     cmd = f"""SELECT {columns_txt}
 	        FROM {tab+desc}"""
     if tab != "GEO":
-        cmd += f""" INNER JOIN {tab} ON {tab}.hash={tab+desc}.hash
-                WHERE """
-        cmd += "("
-        cmd += "".join([tab + desc + ".symbol LIKE '" + s + "' OR " for s in symbol])
-        cmd += tab + desc + ".symbol LIKE 'none' "  # just to finish last OR
-        cmd += ")"
+        cmd += f" INNER JOIN {tab} ON {tab}.hash={tab+desc}.hash"
+    cmd += " WHERE "
+    cmd += "("
+    for c in cols:
+        cmd += "".join([tab + desc + f".{c} LIKE '" + s + "' OR " for s in symbol])
+    cmd += tab + desc + f".{cols[0]} LIKE 'none' "  # just to finish last OR
+    cmd += ")"
 
+    if tab != "GEO":
         if not to_date or not from_date:
             cmd += f"""AND strftime('%s',date)=strftime('%s',{tab+desc}.to_date)"""
         else:
@@ -87,7 +93,7 @@ def query(
         return resp.drop_duplicates()
 
 
-def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
+def get_from_geo(db_file: str, tab: str, search: List, what: List[str]) -> List[str]:
     """
     Return symbol from country/region.
     Limit components to given table only
@@ -103,8 +109,9 @@ def get_from_geo(db_file: str, tab: str, search: List, what: str) -> List[str]:
                 WHERE 
         """
     cmd += "("
-    cmd += "".join([f"g.{what} LIKE '" + s + "' OR " for s in search])
-    cmd += f"g.{what} LIKE 'none' "  # just to finish last OR
+    for w in what:
+        cmd += "".join([f"g.{w} LIKE '" + s + "' OR " for s in search])
+    cmd += f"g.{what[0]} LIKE 'none' "  # just to finish last OR
     cmd += ")"
 
     resp = __execute_sql__([cmd], db_file=db_file)

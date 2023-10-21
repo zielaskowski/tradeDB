@@ -65,7 +65,8 @@ def stooq(
         url = f"https://stooq.pl/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
         data = __scrap_stooq__(url)
     elif component:
-        url = f"https://stooq.pl/q/i/?s={component}&l=%page%"
+        url = f"https://stooq.pl/q/i/?s={component}&i=0&l=%page%"
+        # i: show indicators 
         data = __scrap_stooq__(url)
 
     return data
@@ -254,7 +255,6 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
                 "kurs": "val",
                 "data": "date",
                 "wolumen": "vol",
-                "kapitalizacja (mln)": "vol",
                 "zamknięcie": "val",
                 "last": "val",
                 "close": "val",

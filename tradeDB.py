@@ -25,7 +25,17 @@ get data from WorldBank for country: GDP stock volume,
 
 class Trader:
     def __init__(self, db="", update_symbols=True) -> None:
-        super().__init__()
+        # global variables
+        self.update_dates = True
+        self.update_symbols = False
+        self.tab = ""
+        self.region = ["%"]
+        self.country = ["%"]
+        self.components = ["%"]
+        self.name = ["%"]
+        self.symbol = ["%"]
+        self.columns = ["%"]
+        self.currency = "%"
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -122,44 +132,50 @@ class Trader:
         strict=False,
     ) -> List:
         """
-        check argumnt against possible values
-        Display info if missing or argument in within opts
-        pass check if arg equal "%"
-        Args:
-            arg: arg value, possibly more values split with ';'
-            arg_name: arg name
-            opts: list of col names with possible options, or list of options
-            tab: table where to search for opts
-            opts_direct: opts given directly as list of options
-            strict = False, search all matching by adding *
-        Returns "" if checks  fail or arg itself if all ok
+        check argumnt against possible values\n
+        Display info if missing or argument in within opts\n
+        pass check if arg equal "%"\n
+        Args:\n
+            arg: arg value, possibly more values split with ';'\n
+            arg_name: arg name\n
+            opts: list of col names with possible options, or list of options\n
+            tab: table where to search for opts\n
+            opts_direct: opts given directly as list of options\n
+            strict = False, search all matching by adding *\n
+        Raise 'ValueError' if checks  fail or arg itself if all ok\n
         """
         if arg == "%":
             return [arg]
         if not arg:
-            print(f"Missing argument '{arg_name}'")
-            print(f"Possible values are: {opts}")
-            return []
+            raise (
+                ValueError(
+                    f"Missing argument '{arg_name}'\nPossible values are: {opts}"
+                )
+            )
 
         arg = arg.upper()
 
         args = arg.split(";")
         args = [a.strip() for a in args]
 
+        if tab != 'GEO':
+            tab +='_DESC'
         # collect options
         if not opts_direct:
             cols = opts
             opts = []
             for col in cols:
-                opts += sql.get(
+                if o := sql.get(
                     db_file=self.db, tab=tab, get=[col], search=["%"], cols=[col]
-                )[col][col].to_list()
+                ):
+                    opts += o[col][col].to_list()
+                else:
+                    raise (ValueError(""))
         # make sure the opts are unique
         opts = list(set(opts))
         opts = [o.upper() for o in opts]
         if arg == "?":
-            print(f"Possible values are: {opts}")
-            return []
+            raise (ValueError(f"Possible values are: {opts}"))
 
         args_checked = []
         for arg in args:
@@ -168,24 +184,138 @@ class Trader:
             else:
                 r = re.compile(arg + "$")
             match = list(filter(r.match, opts))
-            if arg in match:  # if we have match
+            if arg in match:  # we have direct match, possibly also others
                 args_checked += [arg]
                 continue
-            if len(match) == 1:
-                args_checked += [match[0]]
+            if len(match) == 1:# match also partially if unique
+                args_checked += match
                 continue
-            if not match:
-                print(f"Wrong argument '{arg_name}' value: {arg}.")
-                print(f"Possible values are: {opts}")
             if len(match) > 1:
-                print(f"Ambiguous '{arg_name}' value: '{arg}'.")
-                print(f"Possible matches: {match}")
-            return []
+                raise (
+                    ValueError(
+                        f"Ambiguous '{arg_name}' value: {arg}.\nPossible values are: {match}"
+                    )
+                )
+            raise (
+                ValueError(
+                    f"Wrong argument '{arg_name}' value: {arg}.\nPossible values are: {opts}"
+                )
+            )
+        if arg_name == 'tab' and args_checked != [self.tab]:
+            # reset all argument if tab changed
+            self.__init__(update_symbols=False)
         return args_checked
 
-    def get(
-        self, update_symbols=False, update_dates=True, **kwargs
-    ) -> Union[pd.DataFrame, str, None]:
+    def __arg_tab__(self, arg: str) -> None:
+        opts = list(self.SECTORS.keys())
+        opts.append("GEO")
+        self.tab = self.__check_arg__(
+            arg=arg, arg_name="tab", opts=opts, opts_direct=True
+        )[0]
+        if self.tab == 'GEO':
+            self.symbol = ['%']
+
+    def __arg_symbol__(self, arg: str) -> None:
+        if self.tab == 'GEO' and arg != '%':
+            print("Argument 'SYMBOL' not valid for tab='GEO'. Ignoring.")
+            return
+        self.symbol = self.__check_arg__(
+            arg=arg, arg_name="symbol", opts=["symbol"], tab=self.tab
+        )
+
+    def __arg_name__(self, arg: str) -> None:
+        if self.tab == 'GEO' and arg != '%':
+            print("Argument 'NAME' not valid for tab='GEO'. Ignoring.")
+            return
+        self.name = self.__check_arg__(
+            arg=arg,
+            arg_name="name",
+            opts=["name"],
+            tab=self.tab
+        )
+        if "%" not in self.name:
+            self.symbol = sql.get(
+                db_file=self.db,
+                tab=self.tab,
+                get=["symbol"],
+                search=self.name,
+                cols=["name"],
+            )["name"]["symbol"].to_list()
+
+    def __arg_component__(self, arg: str) -> None:
+        if  self.tab != "STOCK" and arg != '%':
+            print("Argument 'COMPONENT' valid only for tab='STOCK'. Ignoring.")
+            return
+        self.components = self.__check_arg__(
+            arg=arg,
+            arg_name="components",
+            opts=["name"],
+            tab="INDEXES",
+        )
+        if "%" not in self.components:
+            self.country = ['%']
+            self.region = ['%']
+            self.symbol = sql.index_components(
+                        db_file=self.db, search=self.components
+                    )
+
+    def __arg_country__(self, arg: str) -> None:
+        self.country = self.__check_arg__(
+            arg=arg,
+            arg_name="country",
+            opts=["iso2", "country"],
+            tab="GEO",
+        )
+        if "%" not in self.country:
+            self.components = ['%']
+            self.region = ['%']
+            if self.tab == 'GEO':
+                self.symbol = self.country
+            else:
+                self.symbol = sql.get_from_geo(
+                    db_file=self.db, tab=self.tab, search=self.country, what=["country","iso2"]
+                )
+
+    def __arg_region__(self, arg: str) -> None:
+        sector_dat = self.SECTORS["INDEXES"]["data"]
+        opts = list(set([v["description"]["region"] for _, v in sector_dat.items()]))
+        self.region = self.__check_arg__(
+            arg=arg,
+            arg_name="region",
+            opts=opts,
+            opts_direct=True,
+        )
+        if "%" not in self.region:
+            self.country = ['%']
+            self.components = ['%']
+            if self.tab == 'GEO':
+                self.symbol = self.region
+            else:
+                self.symbol = sql.get_from_geo(
+                    db_file=self.db, tab=self.tab, search=self.region, what=["region"]
+                )
+
+    def __arg_columns__(self, arg: str) -> None:
+        opts = sql.tab_columns(tab=self.tab, db_file=self.db)
+        opts += sql.tab_columns(tab=self.tab + "_DESC", db_file=self.db)
+        opts = [c for c in opts if c.upper() not in ["HASH"]]
+        self.columns = self.__check_arg__(
+            arg=arg,
+            arg_name="columns",
+            opts=opts,
+            tab=self.tab,
+            opts_direct=True,
+        )
+
+    def __arg_currency__(self, arg: str) -> None:
+        self.currency = self.__check_arg__(
+            arg=arg,
+            arg_name="currency",
+            opts=["currency_code"],
+            tab="GEO",
+        )[0]
+
+    def get(self, **kwargs) -> Union[pd.DataFrame, str, None]:
         """get requested data from db or from web if missing in db
 
         Args:
@@ -203,7 +333,7 @@ class Trader:
         If many args given the last on below list will matter
         If none is given will list all symbols and cols for table 'tab'
         Use '?' to list allowed values
-        Use ';' to split more values
+        Use ';' to split multiple values
             [symbol]: symbol of the ticker, defoult all
             [name]: name of ticker
             [components]: list all components of given INDEXES (names)
@@ -211,14 +341,14 @@ class Trader:
             [region]: region to filter
 
             [columns]: limit result to selected columns, defoult all
-            [currency]: by defoult return in USD
+            [currency]: by defoult return in country currency
             start: start date for search
             end: end date for search
         """
+
         if len(kwargs) == 0:
             return self.get.__doc__
-        # unpack arguments
-        ##################
+
         # warn if we have overlaping arguments
         args = [
             e
@@ -232,167 +362,87 @@ class Trader:
         # sql file location
         self.db = kwargs.get("db_file", self.db)
 
-        # sql table
-        opts = list(self.SECTORS.keys())
-        opts.append("GEO")
-        if not (
-            tab := self.__check_arg__(
-                arg=kwargs.get("tab", ""), arg_name="tab", opts=opts, opts_direct=True
+        # unpack arguments
+        ##################
+        try:
+            # sql table
+            self.__arg_tab__(arg=kwargs.get("tab", self.tab))
+
+            # symbol
+            self.__arg_symbol__(arg=kwargs.get("symbol", ";".join(self.symbol)))
+
+            # name
+            self.__arg_name__(arg=kwargs.get("name", ";".join(self.name)))
+
+            # components
+            self.__arg_component__(
+                arg=kwargs.get("components", ";".join(self.components))
             )
-        ):
-            return
-        tab = tab[0]
+
+            # filter countries
+            self.__arg_country__(arg=kwargs.get("country", ";".join(self.country)))
+
+            # filter region
+            self.__arg_region__(arg=kwargs.get("region", ";".join(self.region)))
+
+            # columns
+            self.__arg_columns__(arg=kwargs.get("columns", ";".join(self.columns)))
+
+            # currency
+            self.__arg_currency__(arg=kwargs.get("currency", self.currency))
+        except ValueError as e:
+            print(e)
+            return ""
+        
+        self.update_dates = kwargs.get("update_dates", True)
+        self.update_symbols = kwargs.get("update_symbols", False)
         # GEO tab must be treated specially: update dosen't make sens
-        if "GEO" in tab:
-            update_dates = False
-            update_symbols = False
-        # symbol
-        if not (
-            symbol := self.__check_arg__(
-                arg=kwargs.get("symbol", "%"),
-                arg_name="symbol",
-                opts=["symbol"],
-                tab=tab,
-            )
-        ):
-            return
-
-        # name
-        if not (
-            name := self.__check_arg__(
-                arg=kwargs.get("name", "%"),
-                arg_name="name",
-                opts=["name"],
-                tab=tab + "_DESC",
-            )
-        ):
-            return
-        if "%" not in name:
-            symbol = sql.get(
-                db_file=self.db,
-                tab=tab + "_DESC",
-                get=["symbol"],
-                search=name,
-                cols=["name"],
-            )["name"]["symbol"].to_list()
-
-        # components
-        if not (
-            component := self.__check_arg__(
-                arg=kwargs.get("component", "%"),
-                arg_name="components",
-                opts=["name"],
-                tab="INDEXES_DESC",
-            )
-        ):
-            return pd.DataFrame()
-        if "%" not in component:
-            if tab != "STOCK":
-                print("Argument 'component' valid only for tab='STOCK'. Ignoring.")
-                return pd.DataFrame()
-            else:
-                symbol = sql.index_components(db_file=self.db, search=component)
-
-        # filter countries
-        if not (
-            country := self.__check_arg__(
-                arg=kwargs.get("country", "%"),
-                arg_name="country",
-                opts=["iso2", "country"],
-                tab="GEO",
-            )
-        ):
-            return pd.DataFrame()
-        if "%" not in country:
-            symbol = sql.get_from_geo(
-                db_file=self.db, tab=tab, search=country, what="country"
-            )
-
-        # filter region
-        sector_dat = self.SECTORS["INDEXES"]["data"]
-        opts = list(set([v["description"]["region"] for _, v in sector_dat.items()]))
-        if not (
-            region := self.__check_arg__(
-                arg=kwargs.get("region", "%"),
-                arg_name="region",
-                opts=opts,
-                opts_direct=True,
-            )
-        ):
-            return
-        if "%" not in region and not update_symbols:
-            symbol = sql.get_from_geo(
-                db_file=self.db, tab=tab, search=region, what="region"
-            )
-
-        # columns
-        opts = sql.tab_columns(tab=tab, db_file=self.db)
-        opts += sql.tab_columns(tab=tab + "_DESC", db_file=self.db)
-        opts = [c for c in opts if c.upper() not in ["HASH"]]
-        if not (
-            columns := self.__check_arg__(
-                arg=kwargs.get("columns", "%"),
-                arg_name="columns",
-                opts=opts,
-                tab=tab,
-                opts_direct=True,
-            )
-        ):
-            return
-
-        # currency
-        if not (
-            currency := self.__check_arg__(
-                arg=kwargs.get("currency", "%"),
-                arg_name="currency",
-                opts=["currency_code"],
-                tab="GEO",
-            )
-        ):
-            return
-
+        if "GEO" in self.tab:
+            self.update_dates = False
+            self.update_symbols = False
+        
         # dates
         # if not selected particular names, display last date only
         # and do not update
         if not any([a in ["name", "symbol"] for a in kwargs.keys()]):
             from_date, to_date = self.__set_dates__()
-            if update_dates:
+            if self.update_dates:
                 print("Date range changed to last available data.")
                 print(
                     "Select particular symbol(s) or name(s) if you want different dates."
                 )
-                update_dates = False
+                self.update_dates = False
         else:
             from_date, to_date = self.__set_dates__(kwargs)
 
-        if update_symbols:
+        if self.update_symbols:
             # set dates to today to limit trafic to avoid blocking
             # (done in __update_sql__)
             print("Date range changed to last working day when updating symbols.")
-            self.__update_sql__(region=region)
+            self.__update_sql__(region=self.region)
             # new symbols may arrive so update
-            symbol = sql.get_from_geo(
-                db_file=self.db, tab=tab, search=region, what="region"
+            self.symbol = sql.get_from_geo(
+                db_file=self.db, tab=self.tab, search=self.region, what=["region"]
             )
             from_date, to_date = self.__set_dates__()
-            update_dates = False
+            self.update_dates = False
 
-        if update_dates:
+        if self.update_dates:
             self.__update_dates__(
-                tab=tab, symbol=symbol, from_date=from_date, to_date=to_date
+                tab=self.tab, symbol=self.symbol, from_date=from_date, to_date=to_date
             )
 
         dat = sql.query(
             db_file=self.db,
-            tab=tab,
-            symbol=symbol,
+            tab=self.tab,
+            symbol=self.symbol,
             from_date=from_date,
             to_date=to_date,
-            columns=columns,
+            columns=self.columns,
         )
 
-        if "%" not in currency:
-            self.convert_currency(dat, currency)
+        # dat = self.convert_currency(dat, self.currency)
+
         return dat
 
     def __set_dates__(self, dates={}) -> Tuple:
@@ -469,11 +519,13 @@ class Trader:
                         sys.exit(f"FATAL: wrong data for '{n}'")
                     bar()
 
-    def convert_currency(self, dat, currency):
+    def convert_currency(self, dat, currency: str):
         # download missing data
         # assume all symbols are already in sql db
         print("currency conversion not implemented yet")
         return
+        if "%" in currency:
+            return dat
         min_date = min(
             sql.get(
                 tab=tab + "_DESC", get=["from_date"], search=symbol, cols=["symbol"]
@@ -586,7 +638,7 @@ class Trader:
 
         countries = sql.get(
             tab="GEO", get=["country"], search=["%"], db_file=self.db, cols=["country"]
-        )["country"]['country'].to_list()
+        )["country"]["country"].to_list()
 
         split = [re.split(" - ", n) for n in names]
         name_short = [s[0] for s in split]
