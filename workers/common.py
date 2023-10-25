@@ -64,7 +64,7 @@ def set_header(file: str, upd_header={}) -> dict:
 
 
 def biz_date(
-    from_date: Union[dt, date, str], to_date: Union[dt, date, str]
+    from_date: Union[dt, date, str], to_date: Union[dt, date, str], format="%d-%m-%Y"
 ) -> Tuple[date, date]:
     # first, make sure dates are datetime
     if isinstance(from_date, date):
@@ -72,10 +72,10 @@ def biz_date(
     if isinstance(to_date, date):
         to_date = dt(to_date.year, to_date.month, to_date.day)
     if isinstance(from_date, str):
-        from_datePD = pd.to_datetime(from_date)
+        from_datePD = pd.to_datetime(from_date, format=format)
         from_date = dt(from_datePD.year, from_datePD.month, from_datePD.day)
     if isinstance(to_date, str):
-        to_datePD = pd.to_datetime(to_date)
+        to_datePD = pd.to_datetime(to_date, format=format)
         to_date = dt(to_datePD.year, to_datePD.month, to_datePD.day)
 
     # convert date to MST and substract one day
@@ -95,7 +95,7 @@ def biz_date(
 
 
 def convert_date(dates: pd.Series) -> pd.Series:
-    # set date: it's in 'mmm d'(ENG) or 'd mmm'(PL) or 'hh:ss' for today
+    # set date: it's in 'mmm d'(ENG) or 'd mmm'(PL) or 'hh:ss' for today and some more
     # return '' if format not known
     @contextmanager
     def setlocale(*args, **kwargs):
@@ -144,3 +144,35 @@ def hash_table(dat: pd.DataFrame, tab: str) -> Union[pd.Series, None]:
         for r in d.loc[:, ["symbol", "name", "tab"]].to_records(index=False)
     ]
     return d["hash"]
+
+
+def read_currency(file: str) -> pd.DataFrame:
+    cur = pd.read_csv(file)
+    cur = cur.loc[cur["withdrawal_date"].isna(), :]
+    # some cleaning
+    # replace '(abc)' with ', abc'
+    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\s*\(", ", ", x))
+    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
+    cur["Entity"] = cur["Entity"].apply(
+        lambda x: re.sub("CAYMAN ISLANDS, THE", "CAYMAN ISLANDS", x)
+    )
+    cur["Entity"] = cur["Entity"].apply(
+        lambda x: re.sub("ST.MARTIN, FRENCH PART", "ST.MARTIN (FRENCH PART)", x)
+    )
+    cur["Entity"] = cur["Entity"].apply(
+        lambda x: re.sub("ST.MARTIN, FRENCH PART", "ST.MARTIN (FRENCH PART)", x)
+    )
+
+    cur.rename(
+        columns={
+            "symbol": "icon",
+            "Entity": "country",
+            "currency": "name",
+            "code": "symbol",
+            "numeric_code": "currency_code",
+        },
+        inplace=True,
+    )
+    cur.dropna(subset=['country','symbol','name'], inplace=True)
+
+    return cur

@@ -3,20 +3,19 @@
   //**
   //** column names with lower case
   //** data ONLY upper case, with exception for 'info'
-  //** 
+  //**
+  //** reference with FOREIGN key only to UNIQUE/PRIMARY columns  
   "GEO":
     //**https://wbdata.readthedocs.io/en/stable/
     {
       "iso2": "TEXT PRIMARY KEY",
-      "country": "TEXT",
+      "country": "TEXT UNIQUE",
       "iso2_region": "TEXT",
       "region": "TEXT",
-      "currency": "TEXT NOT NULL",
-      "currency_code": "TEXT",
-      "currency_digit": "INTEGER",
-      "last_upd": "DATE NOT NULL"
+      "currency": "TEXT",
+      "last_upd": "DATE NOT NULL",
+      "FOREIGN": [{"currency": "CURRENCY_DESC(symbol)"}]
     },
-
   "INDEXES_DESC": {
     //**INDEX is reserved keyword
     "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'INDEXES'
@@ -29,7 +28,6 @@
     "to_date": "DATE NOT NULL",
     "FOREIGN": [{ "country": "GEO(iso2)" }]
   },
-
   "INDEXES": {
     "hash": "TEXT",
     "val": "INTEGER NOT NULL",
@@ -74,16 +72,6 @@
     "FOREIGN": [{ "hash": "COMODITIES_DESC(hash)" }],
     "UNIQUE": ["hash","date"]
   },
-
-  "STOCK": {
-    "hash": "TEXT",
-    "vol": "INTEGER",
-    "val": "INTEGER NOT NULL",
-    "date": "DATE NOT NULL",
-    "FOREIGN": [{ "hash": "STOCK_DESC(hash)" }],
-    "UNIQUE": ["hash","date"]
-  },
-
   "STOCK_DESC": {
     "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'STOCK'
     "symbol": "TEXT NOT NULL",
@@ -94,6 +82,14 @@
     "from_date": "DATE NOT NULL",
     "to_date": "DATE NOT NULL",
     "FOREIGN": [{ "country": "GEO(iso2)" }]
+  },
+  "STOCK": {
+    "hash": "TEXT",
+    "vol": "INTEGER",
+    "val": "INTEGER NOT NULL",
+    "date": "DATE NOT NULL",
+    "FOREIGN": [{ "hash": "STOCK_DESC(hash)" }],
+    "UNIQUE": ["hash","date"]
   },
   "COMPONENTS": {
     //** connection between indexes and stock
@@ -107,11 +103,21 @@
     ],
     "UNIQUE": [ "indexes_hash", "stock_hash" ]
   },
-  //** all prices in SQL are written local currency
+  //** all prices in SQL are written in local currency
+  //** all currencies denominated to EUR ('val' column)
+  "CURRENCY_DESC": {
+    "hash": "TEXT PRIMARY KEY", //**from symbol, name, 'CURRENCY'
+    "symbol": "TEXT UNIQUE",
+    "name": "TEXT",
+    "currency_code": "INTEGER",
+    "from_date": "DATE",
+    "to_date": "DATE"
+  },
   "CURRENCY": {
-    "iso2": "TEXT",
-    "toUSD": "INTEGER NOT NULL",
+    "hash": "TEXT",
+    "val": "INTEGER NOT NULL",
     "date": "DATE NOT NULL",
-    "FOREIGN": [{ "iso2": "GEO(iso2)" }]
+    "FOREIGN": [{ "hash": "CURRENCY_DESC(hash)" }],
+    "UNIQUE": ["hash","date"]
   }
 }

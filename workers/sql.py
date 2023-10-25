@@ -4,12 +4,12 @@ import sys
 import sqlite3
 from datetime import datetime as dt
 from datetime import date
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Tuple, Set
 
 import pandas as pd
 import wbdata as wb
 
-from workers.common import read_json, hash_table
+from workers.common import read_json, hash_table, read_currency
 
 """manages SQL db.
 DB structure is described in ./asstes/sql_scheme.json
@@ -44,37 +44,47 @@ def query(
     if not check_sql(db_file):
         return
     symbol = __escape_quote__(symbol)
-    
+
     if tab == "GEO":
         desc = ""
-        cols = ['country','iso2', 'region']
+        se_cols = ["country", "iso2", "region"]
     else:
         desc = "_DESC"
-        cols = ['symbol']
+        se_cols = ["symbol"]
 
     # get tab columns (omit hash)
+    columns = [c.lower() for c in columns]
+    all_columns = [
+        c
+        for c in tab_columns(tab, db_file) + tab_columns(tab + desc, db_file)
+        if c not in ["hash"]
+    ]
     if "%" in columns:
-        columns = [
-            c
-            for c in tab_columns(tab, db_file) + tab_columns(tab + desc, db_file)
-            if c not in ["hash"]
-        ]
-    columns_txt = ",".join(set(columns))
+        columns.remove("%")
+        columns = columns + all_columns + ["indexes"]
+        columns = set(columns)
+    # handle columns names with '-' (exclude)
+    minus_cols = [c.lstrip("-") for c in columns if re.match(r"^-.*", c)]
+    cols = [c for c in columns if re.match(r"^[^-].*", c) and c in all_columns]
+    if not cols:
+        cols = all_columns
+    [cols.remove(c) for c in minus_cols if c in cols]
+    columns_txt = ",".join(set(cols))
 
     cmd = f"""SELECT {columns_txt}
-	        FROM {tab+desc}"""
+	        FROM {tab+desc} td"""
     if tab != "GEO":
-        cmd += f" INNER JOIN {tab} ON {tab}.hash={tab+desc}.hash"
+        cmd += f" INNER JOIN {tab} t ON t.hash=td.hash"
     cmd += " WHERE "
     cmd += "("
-    for c in cols:
-        cmd += "".join([tab + desc + f".{c} LIKE '" + s + "' OR " for s in symbol])
-    cmd += tab + desc + f".{cols[0]} LIKE 'none' "  # just to finish last OR
+    for c in se_cols:
+        cmd += "".join([f"td.{c} LIKE '" + s + "' OR " for s in symbol])
+    cmd += f"td.{se_cols[0]} LIKE 'none' "  # just to finish last OR
     cmd += ")"
 
     if tab != "GEO":
         if not to_date or not from_date:
-            cmd += f"""AND strftime('%s',date)=strftime('%s',{tab+desc}.to_date)"""
+            cmd += r"AND strftime('%s',t.date)=strftime('%s',td.to_date)"
         else:
             cmd += f"""AND strftime('%s',date) BETWEEN
                         strftime('%s','{from_date}') AND strftime('%s','{to_date}')
@@ -85,11 +95,12 @@ def query(
         return
     else:
         resp = resp[cmd]
-        if tab == "STOCK" and "name" in resp.columns:
+        if tab == "STOCK" and "indexes" in columns:
             idx = stock_index(db_file=db_file, search=resp.loc[:, "name"].to_list())
             if idx is not None:
                 resp = resp.merge(idx, how="left", left_on="name", right_on="stock")
                 resp.drop(columns=["stock"], inplace=True)
+                resp = resp.reindex(columns=pd.Index(columns))
         return resp.drop_duplicates()
 
 
@@ -120,7 +131,7 @@ def get_from_geo(db_file: str, tab: str, search: List, what: List[str]) -> List[
     return resp[cmd]["symbol"].to_list()
 
 
-def index_components(db_file: str, search: List) -> list:
+def index_components(db_file: str, search: List) -> List[str]:
     """
     Return components of given index name.
     """
@@ -149,7 +160,7 @@ def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
     Use stock name in search
     Return DataFrame with columns [indexes] and [stock]
     """
-    cmd = f"""SELECT
+    cmd = """SELECT
                 i.name AS 'indexes', s.name AS 'stock'
             FROM
                 STOCK_DESC s
@@ -166,6 +177,47 @@ def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
     if resp is None or resp[cmd].empty:
         return
     return resp[cmd]
+
+
+def currency_of_country(db_file: str, country: Union[List, set]) -> pd.DataFrame:
+    """
+    Return currency info for country
+    """
+    cmd = """SELECT *
+            FROM CURRENCY_DESC cd
+            INNER JOIN GEO g ON cd.symbol=g.currency
+                WHERE
+        """
+    cmd += "("
+    cmd += "".join([f"g.iso2 LIKE '" + c + "' OR " for c in country])
+    cmd += f"g.iso2 LIKE 'none' "  # just to finish last OR
+    cmd += ")"
+    resp = __execute_sql__([cmd], db_file=db_file)
+    if resp is None or resp[cmd].empty:
+        return pd.DataFrame()
+    return resp[cmd].drop(["currency", "last_upd", "hash"], axis="columns")
+
+
+def currency_rate(db_file: str, dat: pd.DataFrame) -> list:
+    """
+    Return currency rate for cur_symbol | date
+    """
+    cmd = """SELECT c.val, c.date, cd.symbol
+            FROM CURRENCY c
+            INNER JOIN CURRENCY_DESC cd ON c.hash=cd.hash
+                WHERE
+        """
+    cmd += " OR ".join(
+        [
+            f"(cd.symbol LIKE '{row.symbol}' AND strftime('%s',c.date)=strftime('%s','{row.date}') )"
+            for row in dat.itertuples(index=False)
+        ]
+    )
+    resp = __execute_sql__([cmd], db_file=db_file)
+    if resp is None or resp[cmd].empty:
+        return []
+    dat = dat.merge(resp[cmd], how="left", on=["date", "symbol"])
+    return dat["val"].to_list()
 
 
 def tab_exists(tab: str) -> bool:
@@ -235,15 +287,14 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
     # sql will handel unique rows
     ####
     if "indexes" in dat.columns:
-        hash = get(
+        if hash := getL(
             db_file=db_file,
             tab="INDEXES_DESC",
             get=["hash"],
-            search=[dat.loc[0, "indexes"]],
-            cols=["symbol"],
-        )["symbol"]
-        if not hash.empty:
-            hash = hash.iloc[0, 0]
+            search=[str(dat.loc[0, "indexes"])],
+            where=["symbol"],
+        ):
+            hash = hash[0]
         else:
             return
         components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
@@ -267,8 +318,34 @@ def __write_table__(
     return __execute_sql__(cmd, db_file)
 
 
+def getDF(**kwargs) -> pd.DataFrame:
+    """wraper around get() when:
+    - search is on one col only
+    returns dataframe, in contrast to Dict[col:pd.DataFrame]
+    """
+    resp = get(**kwargs)
+    return list(resp.values())[0]
+
+
+def getL(**kwargs) -> List:
+    """wraper around get() when:
+    - search in on one col only
+    - get only one column from DataFrame
+    returns list, in contrast to Dict[col:pd.DataFrame]
+    """
+    resp = get(**kwargs)
+    df = list(resp.values())[0]
+    if df.empty:
+        return []
+    return list(df.to_dict(orient="list").values())[0]
+
+
 def get(
-    tab: str, get: list, search: list, db_file: str, cols=["%"]
+    db_file: str,
+    tab: str,
+    get: Union[List[str], Set] = ["%"],
+    search: Union[List[str], Set] = ["%"],
+    where: Union[List[str], Set] = ["%"],
 ) -> Dict[str, pd.DataFrame]:
     """get info from table
     return as Dict:
@@ -277,10 +354,11 @@ def get(
     return only unique values
 
     Args:
+        db_file: file location
         tab: table to search
-        get: column name to extract (use '%' for all columns)
-        search: what to get (use '%' for everything)
-        cols: columns used for searching
+        get: column name to extract (defoult '%' for all columns)
+        search: what to get (defoult '%' for everything)
+        where: columns used for searching (defoult '%' for everything)
     """
     search = __escape_quote__(search)
     resp = {}
@@ -288,9 +366,9 @@ def get(
     tab = tab.upper()
     search = [s.upper() for s in search]
     get = [g.lower() for g in get]
-    cols = [c.lower() for c in cols]
-    if cols[0] == "%":
-        cols = all_cols
+    where = [c.lower() for c in where]
+    if where[0] == "%":
+        where = all_cols
     if get[0] == "%":
         get = all_cols
     if not all(g in all_cols for g in get):
@@ -302,10 +380,12 @@ def get(
     if not tab_exists(tab):
         return {}
 
-    for c in cols:
+    for c in where:
         cmd = f"SELECT {','.join(get)} FROM {tab} WHERE "
+        cmd += "("
         cmd += " ".join([f"{c} LIKE '{s}' OR " for s in search])
         cmd += f"{c} LIKE 'none'"  # just to close last 'OR'
+        cmd += ")"
         if resp_col := __execute_sql__([cmd], db_file):
             resp[c] = resp_col[cmd].drop_duplicates()
     return resp
@@ -387,14 +467,13 @@ def rm_all(tab: str, symbol: str, db_file: str) -> Union[None, Dict[str, pd.Data
     # check if tab exists!
     if not tab_exists(tab):
         return
-    hash = get(
+    hash = getL(
         tab=tab + "_DESC",
         get=["hash"],
         search=[symbol],
-        cols=["symbol"],
+        where=["symbol"],
         db_file=db_file,
-    )
-    hash = hash["symbol"].loc[0, "hash"]
+    )[0]
 
     cmd = [f"DELETE FROM {tab} WHERE hash='{hash}'"]
     cmd += [f"DELETE FROM COMPONENTS WHERE stock_hash='{hash}'"]
@@ -556,13 +635,20 @@ def create_sql(db_file: str) -> bool:
             os.remove(db_file)
         sys.exit("FATAL: DB not created. Possibly 'sql_scheme.jsonc' file corupted.")
 
+    # write CURRENCY info
+    print("writing CURRENCY info to db...")
+    status = __write_table__(
+        dat=__currency_tab__(), tab="CURRENCY_DESC", db_file=db_file
+    )
+    if not status:
+        print("Problem with CURRENCY data")
+        return False
     # write GEO info
     print("writing GEO info to db...")
     status = __write_table__(__geo_tab__(), tab="GEO", db_file=db_file)
     if not status:
         print("Problem with GEO data")
         return False
-
     print("new DB created")
     return True
 
@@ -577,39 +663,47 @@ def __geo_tab__() -> pd.DataFrame:
         for c in wb.search_countries(".*")
         if c["region"]["value"] != "Aggregates"
     ]
-    con = pd.DataFrame(countries, columns=["iso2", "country", "iso2_region", "region"])
-    con = con.apply(lambda x: x.str.upper())
-    con = con.apply(lambda x: x.str.strip())
+    geo = pd.DataFrame(
+        countries,
+        columns=["iso2", "country", "iso2_region", "region"],
+        dtype=pd.StringDtype(),
+    )
+    geo = geo.apply(lambda x: x.str.upper())
+    geo = geo.apply(lambda x: x.str.strip())
 
-    cur = pd.read_csv(CURR_file)
-    cur = cur.loc[cur["withdrawal_date"].isna(), :]
-    # some cleaning
-    # replace '(abc)' with ', abc'
-    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\s*\(", ", ", x))
-    cur["Entity"] = cur["Entity"].apply(lambda x: re.sub(r"\)$", "", x))
-    cur["Entity"] = cur["Entity"].apply(
-        lambda x: re.sub("CAYMAN ISLANDS, THE", "CAYMAN ISLANDS", x)
-    )
-    cur["Entity"] = cur["Entity"].apply(
-        lambda x: re.sub("ST.MARTIN, FRENCH PART", "ST.MARTIN (FRENCH PART)", x)
-    )
-    cur["Entity"] = cur["Entity"].apply(
-        lambda x: re.sub("ST.MARTIN, FRENCH PART", "ST.MARTIN (FRENCH PART)", x)
-    )
+    currency = read_currency(CURR_file)
+    currency.rename(columns={"symbol": "currency"}, inplace=True)
+    geo = geo.merge(currency[["country", "currency"]], on="country", how="left")
+    geo.dropna(subset=["currency"], inplace=True)
 
-    geo = con.merge(right=cur, how="inner", left_on="country", right_on="Entity")
-    geo = geo[
-        ["iso2", "country", "iso2_region", "region", "currency", "code", "numeric_code"]
-    ]
-    # add 'unknown' just in case
-    geo.loc[len(geo)] = ["UNKNOWN" for i in geo.columns]  # type: ignore
+    # add 'unknown'
+    unknown = pd.DataFrame({c: "UNKNOWN" for c in geo.columns}, index=[1])
+    geo = pd.concat([geo, unknown], ignore_index=True)
     geo["last_upd"] = date.today()
-    geo = geo.set_axis(list(sql_scheme["GEO"].keys()), axis="columns")
-    geo.fillna("", inplace=True)
+
     return geo
 
 
-def __escape_quote__(txt: list[str]) -> List[str]:
+def __currency_tab__() -> pd.DataFrame:
+    sql_scheme = read_json(SQL_file)
+    cur = read_currency(CURR_file)
+    cur.drop_duplicates(subset=["symbol"], inplace=True)
+
+    # add 'unknown'
+    unknown = pd.DataFrame({c: "UNKNOWN" for c in cur.columns}, index=[1])
+    cur = pd.concat([cur, unknown], ignore_index=True)
+
+    cur["hash"] = hash_table(dat=cur, tab="CURRENCY")
+
+    # DATE column must be date, can not be None/NA
+    # will set something extreme so easy to filter
+    cur["from_date"] = date(3000, 1, 1)
+    cur["to_date"] = date(1900, 1, 1)
+    cur = cur.reindex(columns=pd.Index(sql_scheme["CURRENCY_DESC"].keys()))
+    return cur
+
+
+def __escape_quote__(txt: Union[List[str], set]) -> List[str]:
     """
     escape quotes in a list of strings
     """

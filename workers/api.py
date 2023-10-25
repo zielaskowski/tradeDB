@@ -2,7 +2,7 @@ import re
 import sys
 import os
 import asyncio
-
+from typing import Union
 
 from datetime import datetime as dt
 from datetime import date
@@ -32,7 +32,12 @@ header = set_header(STOOQ_HEADER)
 
 
 def stooq(
-    from_date: date, to_date: date, sector_id=0, sector_grp="", symbol="", component=""
+    from_date: Union[date, None],
+    to_date: Union[date, None],
+    sector_id=0,
+    sector_grp="",
+    symbol="",
+    component="",
 ) -> pd.DataFrame:
     """
     Get data from stooq web page
@@ -66,7 +71,7 @@ def stooq(
         data = __scrap_stooq__(url)
     elif component:
         url = f"https://stooq.pl/q/i/?s={component}&i=0&l=%page%"
-        # i: show indicators 
+        # i: show indicators
         data = __scrap_stooq__(url)
 
     return data
@@ -92,16 +97,16 @@ def ecb(
     ecb = sdmx.Request("ECB")
 
     # available symbols
-    exrDSD = ecb.dataflow("EXR").dataflow.EXR.structure # type: ignore
+    exrDSD = ecb.dataflow("EXR").dataflow.EXR.structure  # type: ignore
     exrCMP = exrDSD.dimensions.components
     all_symbols = sdmx.to_pandas(
-        exrCMP[1].local_repesentation.enumerated
+        exrCMP[1].local_representation.enumerated
     ).index.to_list()
     if symbol not in all_symbols:
         print(f"Unknonw symbol: '{symbol}'")
         return pd.DataFrame([""])
 
-    key = ".".join(["D", symbol, "", "", ""])
+    key = ".".join(["D", symbol, "", "", ""]) # D stands for daily
     params = {
         "startPeriod": dt.strftime(from_date, "%Y-%m-%d"),
         "endPeriod": dt.strftime(end_date, "%Y-%m-%d"),
@@ -110,9 +115,9 @@ def ecb(
     dat = sdmx.to_pandas(datEXR).reset_index()
 
     # df cleaning
-    dat["TIME_PERIOD"] = pd.to_datetime(dat["TIME_PERIOD"])
-    dat.rename(column={"TIME_PERIOD": "date", "value": "val"}, inplace=True)
-    return dat.loc[:, ["date", "val"]]
+    dat["TIME_PERIOD"] = pd.to_datetime(dat["TIME_PERIOD"]).dt.date
+    dat.rename(columns={"TIME_PERIOD": "date", "value": "val"}, inplace=True)
+    return dat[["date", "val"]]
 
 
 def __captcha__(page: bs) -> bool:
@@ -219,7 +224,11 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
                     # remove from DB as not usefulle to predict future anymore
                     data = pd.DataFrame(["asset removed"])
                 return data
-
+            # set cooki
+            header = set_header(
+                file=STOOQ_HEADER,
+                upd_header={"cookie": resp.headers.get("set-cookie", "")},
+            )
             page = bs(resp.content, "lxml")
 
             if page.body is None:

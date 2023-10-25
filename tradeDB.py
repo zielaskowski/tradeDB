@@ -1,7 +1,8 @@
 import os
 import re
 import sys
-from datetime import date
+import itertools
+from datetime import date, timedelta
 from typing import Callable, List, Tuple, Union, Dict
 
 import pandas as pd
@@ -26,16 +27,25 @@ get data from WorldBank for country: GDP stock volume,
 class Trader:
     def __init__(self, db="", update_symbols=True) -> None:
         # global variables
-        self.update_dates = True
-        self.update_symbols = False
-        self.tab = ""
-        self.region = ["%"]
-        self.country = ["%"]
-        self.components = ["%"]
-        self.name = ["%"]
-        self.symbol = ["%"]
-        self.columns = ["%"]
-        self.currency = "%"
+        self.args = {
+            "update_dates": True,
+            "update_symbols": False,
+            "tab": "",
+            "columns": ["%"],
+            "currency": "%",
+            "start_date": "",
+            "end_date": "",
+            "date_format": r"%d-%m-%Y",
+            # filtering args start at pos.7
+            "region": ["%"],
+            "country": ["%"],
+            "components": ["%"],
+            "name": ["%"],
+            "symbol": ["%"],
+        }
+        for arg, val in self.args.items():
+            setattr(self, arg, val)
+
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -62,18 +72,18 @@ class Trader:
             # populate indexes
             ##################
             if update_symbols:
-                self.__update_sql__(region=["%"])
+                self.__update_sql__()
 
-    def __update_sql__(self, region: List):
+    def __update_sql__(self):
         print("writing INDEX info to db...")
-        from_date, to_date = self.__set_dates__({"today": True})
+        start_date, end_date = self.__set_dates__({"today": True})
 
         sector_dat = self.SECTORS["INDEXES"]["data"]
-        if "%" not in region:
+        if "%" not in self.region:
             sector_dat = {
                 k: v
                 for k, v in sector_dat.items()
-                if v["description"]["region"] in region
+                if v["description"]["region"] in self.region
             }
 
             for key, region in sector_dat.items():  # type: ignore
@@ -81,8 +91,8 @@ class Trader:
                 dat = api.stooq(
                     sector_id=region["api"]["id"],  # type: ignore
                     sector_grp=region["api"]["group"],  # type: ignore
-                    from_date=from_date,
-                    to_date=to_date,
+                    from_date=start_date,
+                    to_date=end_date,
                 )
                 dat = self.__describe_table__(
                     dat=dat,
@@ -92,14 +102,15 @@ class Trader:
                 resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
                 if not resp:
                     sys.exit(f"FATAL: wrong data for {region}")
+
                 with alive_bar(len(dat.index)) as bar:
                     for s, c in dat.loc[:, ["symbol", "country"]].to_records(
                         index=False
                     ):
                         datComp = api.stooq(
                             component=s,
-                            from_date=from_date,
-                            to_date=to_date,
+                            from_date=start_date,
+                            to_date=end_date,
                         )
                         if datComp.empty:
                             # no components for index
@@ -126,23 +137,23 @@ class Trader:
         self,
         arg: str,
         arg_name: str,
-        opts: Union[List, str],
+        opts: List,
         tab="",
         opts_direct=False,
         strict=False,
     ) -> List:
         """
-        check argumnt against possible values\n
-        Display info if missing or argument in within opts\n
-        pass check if arg equal "%"\n
-        Args:\n
-            arg: arg value, possibly more values split with ';'\n
-            arg_name: arg name\n
-            opts: list of col names with possible options, or list of options\n
-            tab: table where to search for opts\n
-            opts_direct: opts given directly as list of options\n
-            strict = False, search all matching by adding *\n
-        Raise 'ValueError' if checks  fail or arg itself if all ok\n
+        check argumnt against possible values
+        Display info if missing or argument in within opts
+        pass check if arg equal "%"
+        Args:
+            arg: arg value, possibly more values split with ';'
+            arg_name: arg name
+            opts: list of col names with possible options, or list of options
+            tab: table where to search for opts
+            opts_direct: opts given directly as list of options
+            strict = False, search all matching by adding *
+        Raise 'ValueError' if checks  fail or arg itself if all ok
         """
         if arg == "%":
             return [arg]
@@ -158,19 +169,19 @@ class Trader:
         args = arg.split(";")
         args = [a.strip() for a in args]
 
-        if tab != 'GEO':
-            tab +='_DESC'
+        if tab != "GEO":
+            tab += "_DESC"
         # collect options
         if not opts_direct:
             cols = opts
-            opts = []
-            for col in cols:
-                if o := sql.get(
-                    db_file=self.db, tab=tab, get=[col], search=["%"], cols=[col]
-                ):
-                    opts += o[col][col].to_list()
-                else:
-                    raise (ValueError(""))
+            opts = [
+                v[k].to_list()
+                for k, v in sql.get(
+                    db_file=self.db, tab=tab, get=cols, search=["%"], where=cols
+                ).items()
+                if not v.empty
+            ]
+            opts = list(itertools.chain(*opts))  # flatten list
         # make sure the opts are unique
         opts = list(set(opts))
         opts = [o.upper() for o in opts]
@@ -179,15 +190,17 @@ class Trader:
 
         args_checked = []
         for arg in args:
+            # remove possible '-' at begining of arg
+            arg_strip = arg.lstrip("-")
             if not strict:
-                r = re.compile(arg + ".*$")
+                r = re.compile(arg_strip + ".*$")
             else:
-                r = re.compile(arg + "$")
+                r = re.compile(arg_strip + "$")
             match = list(filter(r.match, opts))
-            if arg in match:  # we have direct match, possibly also others
+            if arg_strip in match:  # we have direct match, possibly also others
                 args_checked += [arg]
                 continue
-            if len(match) == 1:# match also partially if unique
+            if len(match) == 1:  # match also partially if unique
                 args_checked += match
                 continue
             if len(match) > 1:
@@ -201,7 +214,7 @@ class Trader:
                     f"Wrong argument '{arg_name}' value: {arg}.\nPossible values are: {opts}"
                 )
             )
-        if arg_name == 'tab' and args_checked != [self.tab]:
+        if arg_name == "tab" and args_checked != [self.tab]:
             # reset all argument if tab changed
             self.__init__(update_symbols=False)
         return args_checked
@@ -212,39 +225,44 @@ class Trader:
         self.tab = self.__check_arg__(
             arg=arg, arg_name="tab", opts=opts, opts_direct=True
         )[0]
-        if self.tab == 'GEO':
-            self.symbol = ['%']
+        if self.tab == "GEO":
+            self.symbol = ["%"]
 
     def __arg_symbol__(self, arg: str) -> None:
-        if self.tab == 'GEO' and arg != '%':
+        if self.tab == "GEO" and arg != "%":
             print("Argument 'SYMBOL' not valid for tab='GEO'. Ignoring.")
             return
         self.symbol = self.__check_arg__(
             arg=arg, arg_name="symbol", opts=["symbol"], tab=self.tab
         )
+        if "%" not in self.symbol:
+            self.name = ["%"]
+            self.components = ["%"]
+            self.country = ["%"]
+            self.region = ["%"]
 
     def __arg_name__(self, arg: str) -> None:
-        if self.tab == 'GEO' and arg != '%':
+        if self.tab == "GEO" and arg != "%":
             print("Argument 'NAME' not valid for tab='GEO'. Ignoring.")
             return
         self.name = self.__check_arg__(
-            arg=arg,
-            arg_name="name",
-            opts=["name"],
-            tab=self.tab
+            arg=arg, arg_name="name", opts=["name"], tab=self.tab
         )
         if "%" not in self.name:
-            self.symbol = sql.get(
+            self.symbol = sql.getDF(
                 db_file=self.db,
-                tab=self.tab,
+                tab=self.tab + "_DESC",
                 get=["symbol"],
                 search=self.name,
-                cols=["name"],
-            )["name"]["symbol"].to_list()
+                where=["name"],
+            )["symbol"].to_list()
+            self.components = ["%"]
+            self.country = ["%"]
+            self.region = ["%"]
 
     def __arg_component__(self, arg: str) -> None:
-        if  self.tab != "STOCK" and arg != '%':
-            print("Argument 'COMPONENT' valid only for tab='STOCK'. Ignoring.")
+        if self.tab != "STOCK" and arg != "%":
+            print("Argument 'COMPONENTS' valid only for tab='STOCK'. Ignoring.")
             return
         self.components = self.__check_arg__(
             arg=arg,
@@ -253,11 +271,9 @@ class Trader:
             tab="INDEXES",
         )
         if "%" not in self.components:
-            self.country = ['%']
-            self.region = ['%']
-            self.symbol = sql.index_components(
-                        db_file=self.db, search=self.components
-                    )
+            self.country = ["%"]
+            self.region = ["%"]
+            self.symbol = sql.index_components(db_file=self.db, search=self.components)
 
     def __arg_country__(self, arg: str) -> None:
         self.country = self.__check_arg__(
@@ -267,13 +283,15 @@ class Trader:
             tab="GEO",
         )
         if "%" not in self.country:
-            self.components = ['%']
-            self.region = ['%']
-            if self.tab == 'GEO':
+            self.region = ["%"]
+            if self.tab == "GEO":
                 self.symbol = self.country
             else:
                 self.symbol = sql.get_from_geo(
-                    db_file=self.db, tab=self.tab, search=self.country, what=["country","iso2"]
+                    db_file=self.db,
+                    tab=self.tab,
+                    search=self.country,
+                    what=["country", "iso2"],
                 )
 
     def __arg_region__(self, arg: str) -> None:
@@ -286,9 +304,7 @@ class Trader:
             opts_direct=True,
         )
         if "%" not in self.region:
-            self.country = ['%']
-            self.components = ['%']
-            if self.tab == 'GEO':
+            if self.tab == "GEO":
                 self.symbol = self.region
             else:
                 self.symbol = sql.get_from_geo(
@@ -298,7 +314,9 @@ class Trader:
     def __arg_columns__(self, arg: str) -> None:
         opts = sql.tab_columns(tab=self.tab, db_file=self.db)
         opts += sql.tab_columns(tab=self.tab + "_DESC", db_file=self.db)
-        opts = [c for c in opts if c.upper() not in ["HASH"]]
+        if self.tab == "STOCK":
+            opts += ["indexes"]
+        opts = [c for c in opts if c not in ["hash"]]
         self.columns = self.__check_arg__(
             arg=arg,
             arg_name="columns",
@@ -311,22 +329,22 @@ class Trader:
         self.currency = self.__check_arg__(
             arg=arg,
             arg_name="currency",
-            opts=["currency_code"],
-            tab="GEO",
+            opts=["symbol", "name"],
+            tab="CURRENCY",
         )[0]
 
-    def get(self, **kwargs) -> Union[pd.DataFrame, str, None]:
+    def get(self, **kwargs) -> Union[pd.DataFrame, str]:
         """get requested data from db or from web if missing in db
 
         Args:
-            update_symbols: if True, update symbols from web, can be limited with region
+            Bool[update_symbols]: if True, update symbols from web, can be limited with region
                             may be time consuming and usually not needed
                             defoult False
-            update_dates:   if requested dates not present in db - update
+            Bool[update_dates]:   if requested dates not present in db - update
                             set to False for speed and to limit network transfer
                             defoult True
-            db_file: force to use different db, will create if missing
-            tab: table to read from [INDEXES, COMODITIES, STOCK, ETF, GEO]
+            str[db_file]: force to use different db, will create if missing
+            str[tab]: table to read from [INDEXES, COMODITIES, STOCK, ETF, GEO]
         Symbol filters:
         check correctness of each filter and display available option if no match
         or matching possibilities if ambigues
@@ -334,27 +352,32 @@ class Trader:
         If none is given will list all symbols and cols for table 'tab'
         Use '?' to list allowed values
         Use ';' to split multiple values
-            [symbol]: symbol of the ticker, defoult all
-            [name]: name of ticker
-            [components]: list all components of given INDEXES (names)
-            [country]: filter results by iso2 of country
-            [region]: region to filter
+        Use '-' to exclude value
+            List[symbol]: symbol of the ticker, defoult all
+            List[name]: name of ticker
+            List[components]: list all components of given INDEXES (names)
+            List[country]: filter results by iso2 of country
+            List[region]: region to filter
 
-            [columns]: limit result to selected columns, defoult all
-            [currency]: by defoult return in country currency
-            start: start date for search
-            end: end date for search
+            List[columns]: limit result to selected columns, defoult all
+            str[currency]: by defoult return in country currency
+            Date[start_date]: start date for search
+            Date[end_date]: end date for search
+            str[date_format]: python strftime format, defoult is '%d-%m-%Y'
         """
 
         if len(kwargs) == 0:
-            return self.get.__doc__
+            print(self.get.__doc__)
+            return ""
 
-        # warn if we have overlaping arguments
-        args = [
-            e
-            for e in ["symbol", "name", "components", "country", "region"]
-            if e in list(kwargs.keys())
-        ]
+        # warn if we have overlaping arguments or unknow argument
+        args = []
+        for a in kwargs.keys():
+            try:
+                idx = list(self.args.keys()).index(a)
+                args += [a] if a in kwargs.keys() and idx > 7 else []
+            except ValueError:
+                print(f"Unknown argument '{a}'. Ignoring")
         if len(args) > 1:
             print(f"Overlaping arguments '{args}'.")
             print("The most broad will be used. See help")
@@ -393,19 +416,20 @@ class Trader:
         except ValueError as e:
             print(e)
             return ""
-        
+
         self.update_dates = kwargs.get("update_dates", True)
         self.update_symbols = kwargs.get("update_symbols", False)
         # GEO tab must be treated specially: update dosen't make sens
         if "GEO" in self.tab:
             self.update_dates = False
             self.update_symbols = False
-        
+
         # dates
         # if not selected particular names, display last date only
         # and do not update
+        self.date_format = kwargs.get("date_format", self.date_format)
         if not any([a in ["name", "symbol"] for a in kwargs.keys()]):
-            from_date, to_date = self.__set_dates__()
+            self.start_date, self.end_date = self.__set_dates__()
             if self.update_dates:
                 print("Date range changed to last available data.")
                 print(
@@ -413,153 +437,162 @@ class Trader:
                 )
                 self.update_dates = False
         else:
-            from_date, to_date = self.__set_dates__(kwargs)
+            self.start_date, self.end_date = self.__set_dates__(kwargs)
 
         if self.update_symbols:
             # set dates to today to limit trafic to avoid blocking
             # (done in __update_sql__)
             print("Date range changed to last working day when updating symbols.")
-            self.__update_sql__(region=self.region)
+            self.__update_sql__()
             # new symbols may arrive so update
             self.symbol = sql.get_from_geo(
                 db_file=self.db, tab=self.tab, search=self.region, what=["region"]
             )
-            from_date, to_date = self.__set_dates__()
+            self.start_date, self.end_date = self.__set_dates__()
             self.update_dates = False
 
         if self.update_dates:
-            self.__update_dates__(
-                tab=self.tab, symbol=self.symbol, from_date=from_date, to_date=to_date
-            )
+            self.__update_dates__()
 
         dat = sql.query(
             db_file=self.db,
             tab=self.tab,
             symbol=self.symbol,
-            from_date=from_date,
-            to_date=to_date,
+            from_date=self.start_date,
+            to_date=self.end_date,
             columns=self.columns,
         )
+        if dat is not None:
+            self.__update_currency__(dat)
+            dat = self.convert_currency(dat)
+            print(dat)
+            return ""
 
-        # dat = self.convert_currency(dat, self.currency)
+        return ""
 
+    def convert_currency(self, dat: pd.DataFrame) -> pd.DataFrame:
+        if self.currency == "%":
+            return dat
+        cols = dat.columns  # so we can restore
+        curFrom = sql.currency_of_country(
+            db_file=self.db, country=dat["country"].to_list()
+        )
+        curFrom.rename(columns={"symbol": "cur_from"}, inplace=True)
+        dat = dat.merge(
+            curFrom, left_on="country", right_on="iso2", how="left", suffixes=("", "_y")
+        )
+        dat["cur_to"] = self.currency
+        dat["val_from"] = sql.currency_rate(
+            db_file=self.db,
+            dat=dat[["cur_from", "date"]].rename(columns={"cur_from": "symbol"}),
+        )
+        dat["val_to"] = sql.currency_rate(
+            db_file=self.db,
+            dat=dat[["cur_to", "date"]].rename(columns={"cur_to": "symbol"}),
+        )
+        dat["val"] = dat["val"] / dat["val_from"] * dat["val_to"]
+        dat = dat.reindex(columns=cols)
         return dat
 
     def __set_dates__(self, dates={}) -> Tuple:
         if not dates:
             return None, None
         else:
-            from_date = dates.get("start", date.today())
-            to_date = dates.get("end", date.today())
-            from_date, to_date = biz_date(from_date, to_date)
-            return from_date, to_date
+            start_date = dates.get("start_date", date.today())
+            end_date = dates.get("end_date", date.today())
+            start_date, end_date = biz_date(
+                start_date, end_date, format=self.date_format
+            )
+            return start_date, end_date
 
-    def __update_dates__(
-        self,
-        tab: str,
-        symbol: list,
-        from_date: date,
-        to_date: date,
-    ) -> None:
-        # download missing data only if dates outside min/max in db
+    def __missing_dates__(self, dat: pd.DataFrame) -> pd.DataFrame:
+        # compare avialable date range with requested dates
+        # leave only symbols that needs update
+        min_dates = dat["from_date"] > self.start_date
+        max_dates = dat["to_date"] < self.end_date
+        dat = dat.loc[min_dates | max_dates]
+        # avoid 'holes' in date series
+        # adjust from_date or to_date to begining/end existing period
+        dat.loc[:, "from_date"] = min(dat["from_date"].to_list() + [self.start_date])
+        dat.loc[:, "to_date"] = max(dat["to_date"].to_list() + [self.end_date])
+        return dat
+
+    def __update_dates__(self) -> None:
+        # download missing data
         # assume all symbols are already in sql db
-        if tab == "GEO":
+        if self.tab == "GEO":
             return
 
-        min_dates = sql.get(
+        symbolDF = sql.getDF(
+            tab=self.tab + "_DESC",
+            search=self.symbol,
+            where=["symbol"],
             db_file=self.db,
-            tab=tab + "_DESC",
-            get=["from_date", "symbol"],
-            search=symbol,
-            cols=["symbol"],
-        )["symbol"]
-        max_dates = sql.get(
-            db_file=self.db,
-            tab=tab + "_DESC",
-            get=["to_date", "symbol"],
-            search=symbol,
-            cols=["symbol"],
-        )["symbol"]
+        )
+        symbolDF = self.__missing_dates__(symbolDF)
 
-        symbolDF = sql.get(
-            db_file=self.db,
-            tab=tab + "_DESC",
-            get=["symbol", "name"],
-            search=symbol,
-            cols=["symbol"],
-        )["symbol"]
-        info = print
-        with alive_bar(len(symbolDF)) as bar:
-            for s, n in symbolDF.itertuples(index=False, name=None):
-                min_date = min_dates.loc[min_dates["symbol"] == s, "from_date"].min()  # type: ignore
-                max_date = max_dates.loc[max_dates["symbol"] == s, "to_date"].max()  # type: ignore
-                if min_date > from_date or max_date < to_date:  # type: ignore
+        if not symbolDF.empty:
+            info = print
+            with alive_bar(len(symbolDF)) as bar:
+                for row in symbolDF.itertuples(index=False):
                     if info:
                         info("...updating dates")
                         info = None
                     dat = api.stooq(
-                        from_date=min(from_date, min_date),
-                        to_date=max(to_date, max_date),
-                        symbol=s,
+                        from_date=row.from_date,
+                        to_date=row.to_date,
+                        symbol=row.symbol,
                     )
                     if dat.empty:
                         print("no data on web")  # DEBUG
                         continue
 
                     if dat.iloc[0, 0] == "asset removed":
-                        sql.rm_all(tab=tab, symbol=s, db_file=self.db)
+                        sql.rm_all(tab=self.tab, symbol=row.symbol, db_file=self.db)
                         print("symbol removed")  # DEBUG
                         continue
 
                     dat = self.__describe_table__(
-                        dat=dat, tab=tab, description={"symbol": s, "name": n}
+                        dat=dat,
+                        tab=self.tab,
+                        description=row._asdict(),
                     )
-                    resp = sql.put(dat=dat, tab=tab, db_file=self.db)
+                    resp = sql.put(dat=dat, tab=self.tab, db_file=self.db)
                     if not resp:
-                        sys.exit(f"FATAL: wrong data for '{n}'")
+                        sys.exit(f"FATAL: wrong data for '{row.name}'")
                     bar()
 
-    def convert_currency(self, dat, currency: str):
+    def __update_currency__(self, dat) -> None:
         # download missing data
         # assume all symbols are already in sql db
-        print("currency conversion not implemented yet")
-        return
-        if "%" in currency:
+        if "%" in self.currency:
             return dat
-        min_date = min(
-            sql.get(
-                tab=tab + "_DESC", get=["from_date"], search=symbol, cols=["symbol"]
-            )["symbol"]["from_date"]
+        curDF = sql.currency_of_country(db_file=self.db, country=set(datgit ["country"]))
+        # include also final currency in update
+        curDest = sql.getDF(
+            tab="CURRENCY_DESC",
+            search=[self.currency],
+            db_file=self.db,
+            where=["symbol"],
         )
-        max_date = max(
-            sql.get(tab=tab + "_DESC", get=["to_date"], search=symbol, cols=["symbol"])[
-                "symbol"
-            ]["to_date"]
+        curDF = pd.concat(
+            [curDF, curDest.reindex(columns=curDF.columns)], ignore_index=True
         )
-        if min_date > from_date or max_date < to_date:
-            for s in symbol:
-                dat = api.stooq(from_date=min_date, to_date=max_date, symbol=s)
-                dat = self.__describe_table__(dat=dat, tab=tab, description={})
-                resp = sql.put(dat=dat, tab=tab, db_file=self.db)
+        curDF = self.__missing_dates__(curDF)
+
+        if not curDF.empty:
+            for row in curDF.itertuples(index=False):
+                cur_val = api.ecb(
+                    from_date=row.from_date, end_date=row.to_date, symbol=row.symbol
+                )
+                cur_val = self.__describe_table__(
+                    dat=cur_val,
+                    tab="CURRENCY",
+                    description=row._asdict(),
+                )
+                resp = sql.put(dat=cur_val, tab="CURRENCY", db_file=self.db)
                 if not resp:
-                    sys.exit(f"FATAL: wrong data for {region}{symbol}{component}")
-
-        country_from = list(set(dat["country"]))
-        from_date = min(dat["from_date"])
-        to_date = max(dat["to_date"])
-
-        for c in country_from:
-            country_to = sql.get(
-                tab="GEO",
-                get=["currency_code"],
-                search=[country],
-                cols=["iso2"],
-                db_file=self.db,
-            )["iso2"]["iso2"][0]
-            cur_dat = api.ecb(from_date=from_date, end_date=to_date, symbol=symbol)
-            cur_dat = self.__describe_table__(
-                dat=cur_dat, tab="CURRENCY", description={"iso2": symbol}
-            )
+                    sys.exit(f"FATAL: wrong data for '{row.symbol}'")
 
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict
@@ -567,9 +600,6 @@ class Trader:
         if dat.empty:
             return dat
 
-        if tab == "CURRENCY":
-            dat["iso2"] = description["iso2"]
-            return dat
         # for some dates the asset value can be missing
         # i.e. when stock is closed due to holidays
         # fill with zero to keep STOCK or INDEX in sql
@@ -599,13 +629,13 @@ class Trader:
             else:
                 col = "to_date"
             for h in dat["hash"]:
-                date_sql = sql.get(
-                    tab + "_DESC",
+                date_sql = sql.getDF(
+                    tab=tab + "_DESC",
                     get=[col],
                     search=[h],
-                    cols=["hash"],
+                    where=["hash"],
                     db_file=self.db,
-                )["hash"]
+                )
                 if date_sql.empty:
                     minmax_date += [func(dat.loc[dat["hash"] == h, "date"])]
                 else:
@@ -636,9 +666,12 @@ class Trader:
         names = names.apply(lambda x: re.sub(r"WIG.*$", x + r" - POLAND", x))
         names = names.apply(lambda x: re.sub(r"ATX.*$", r"ATX - AUSTRIA", x))
 
-        countries = sql.get(
-            tab="GEO", get=["country"], search=["%"], db_file=self.db, cols=["country"]
-        )["country"]["country"].to_list()
+        countries = sql.getL(
+            tab="GEO",
+            get=["country"],
+            db_file=self.db,
+            where=["country"],
+        )
 
         split = [re.split(" - ", n) for n in names]
         name_short = [s[0] for s in split]
@@ -670,16 +703,16 @@ class Trader:
         # search of iso codes needs to be in loop
         # otherway will be unique in alphabetical order
         resp = [
-            sql.get(
+            sql.getL(
                 tab="GEO",
                 get=["iso2"],
                 search=[n + "%"],
-                cols=["country"],
+                where=["country"],
                 db_file=self.db,
             )
             for n in name_country
         ]
-        iso2 = [r["country"].iloc[0, 0] for r in resp]
+        iso2 = [r[0] for r in resp]
         return (name_short, iso2)
 
     def world_bank(self, what: str, country: str):
