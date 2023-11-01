@@ -94,6 +94,11 @@ def ecb(
     <Dimension EXR_SUFFIX>,
     <TimeDimension TIME_PERIOD>
     """
+    if symbol == 'EUR':
+        date_range = pd.date_range(from_date, end_date)
+        dat = pd.DataFrame({'date':date_range, 'val':1})
+        dat.date = dat.date.dt.date
+        return dat
     ecb = sdmx.Request("ECB")
 
     # available symbols

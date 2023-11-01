@@ -26,12 +26,12 @@ def query(
     symbol: List[str],
     from_date: Union[None, date],
     to_date: Union[None, date],
-    columns=["%"],
 ) -> Union[None, pd.DataFrame]:
     """get data from sql db about symbol,
     including relevant data from description tab
     (GEO tab treated separately)
     Usefull to outlook the data avaliable
+    Returns all columns (except hash)
 
     Args:
         db_file: db file
@@ -39,7 +39,6 @@ def query(
         symbol: symbol from table:
         from_date: start date of data (including). if missing take only last date
         to_date: last date of data (including). If empty string, return only last available
-        columns: columns to be included in response
     """
     if not check_sql(db_file):
         return
@@ -52,24 +51,10 @@ def query(
         desc = "_DESC"
         se_cols = ["symbol"]
 
-    # get tab columns (omit hash)
-    columns = [c.lower() for c in columns]
-    all_columns = [
-        c
-        for c in tab_columns(tab, db_file) + tab_columns(tab + desc, db_file)
-        if c not in ["hash"]
-    ]
-    if "%" in columns:
-        columns.remove("%")
-        columns = columns + all_columns + ["indexes"]
-        columns = set(columns)
-    # handle columns names with '-' (exclude)
-    minus_cols = [c.lstrip("-") for c in columns if re.match(r"^-.*", c)]
-    cols = [c for c in columns if re.match(r"^[^-].*", c) and c in all_columns]
-    if not cols:
-        cols = all_columns
-    [cols.remove(c) for c in minus_cols if c in cols]
-    columns_txt = ",".join(set(cols))
+    # get tab columns (without hash)
+    cols = tab_columns(tab=tab, db_file=db_file)
+    cols += tab_columns(tab=tab + desc, db_file=db_file)
+    columns_txt = ",".join(set([c for c in cols if c != 'hash']))
 
     cmd = f"""SELECT {columns_txt}
 	        FROM {tab+desc} td"""
@@ -95,12 +80,10 @@ def query(
         return
     else:
         resp = resp[cmd]
-        if tab == "STOCK" and "indexes" in columns:
-            idx = stock_index(db_file=db_file, search=resp.loc[:, "name"].to_list())
+        if tab == "STOCK":
+            idx = stock_index(db_file=db_file, search=resp.loc[:, "symbol"].to_list())
             if idx is not None:
-                resp = resp.merge(idx, how="left", left_on="name", right_on="stock")
-                resp.drop(columns=["stock"], inplace=True)
-                resp = resp.reindex(columns=pd.Index(columns))
+                resp = resp.merge(idx, how="left", on="symbol")
         return resp.drop_duplicates()
 
 
@@ -157,11 +140,11 @@ def index_components(db_file: str, search: List) -> List[str]:
 def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
     """
     Return index(es) where stock belongs.
-    Use stock name in search
+    Use stock symbol in search
     Return DataFrame with columns [indexes] and [stock]
     """
     cmd = """SELECT
-                i.name AS 'indexes', s.name AS 'stock'
+                i.name AS 'indexes', s.symbol AS 'symbol'
             FROM
                 STOCK_DESC s
             INNER JOIN INDEXES_DESC i ON i.hash=c.indexes_hash
@@ -170,8 +153,8 @@ def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
         """
     search = __escape_quote__(search)
     cmd += "("
-    cmd += "".join([f"s.name LIKE '" + s + "' OR " for s in search])
-    cmd += f"s.name LIKE 'none' "  # just to finish last OR
+    cmd += "".join([f"s.symbol LIKE '" + s + "' OR " for s in search])
+    cmd += f"s.symbol LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp is None or resp[cmd].empty:
@@ -230,7 +213,7 @@ def tab_exists(tab: str) -> bool:
     return True
 
 
-def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
+def put(dat: pd.DataFrame, tab: str, db_file: str, index='') -> Union[Dict, None]:
     # put DataFrame into sql at table=tab
     # if description table exists, writes first to 'tab_desc'
     # takes from DataFrame only columns present in sql table
@@ -264,10 +247,10 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
 
         # compare new data with what present in sql
         dat = dat.reindex(columns=known.columns)  # align columns
-        dat = dat.merge(known, how="left", on=["hash"], suffixes=("", "_known"))
+        dat = dat.merge(known, how="left", on=["hash", "date"], suffixes=("", "_known"))
         # fill new data with what already known
         for c in known.columns:
-            if not re.search("(date)|(val)|(symbol)|(name)|(hash)", c):
+            if not re.search("(date)|(val)|(symbol)|(name)|(hash)|(start_date)|(to_date)", c):
                 dat[c] = dat[c].fillna(dat[c + "_known"])
 
     # add new data to sql
@@ -284,14 +267,14 @@ def put(dat: pd.DataFrame, tab: str, db_file: str) -> Union[Dict, None]:
 
     ####
     # HANDLE INDEXES <-> STOCK: stock can be in many indexes!!!
-    # sql will handel unique rows
+    # sql will handle unique rows
     ####
-    if "indexes" in dat.columns:
+    if index:
         if hash := getL(
             db_file=db_file,
             tab="INDEXES_DESC",
             get=["hash"],
-            search=[str(dat.loc[0, "indexes"])],
+            search=[index],
             where=["symbol"],
         ):
             hash = hash[0]

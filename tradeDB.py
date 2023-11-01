@@ -3,7 +3,7 @@ import re
 import sys
 import itertools
 from datetime import date, timedelta
-from typing import Callable, List, Tuple, Union, Dict
+from typing import Callable, List, Tuple, Union, Dict, Self
 
 import pandas as pd
 from alive_progress import alive_bar
@@ -12,19 +12,35 @@ from alive_progress import alive_bar
 from workers import api, sql
 from workers.common import read_json, biz_date, hash_table
 
-"""manages getting stock data
-use workers based on context
-unpack provided arguments and check correctness or set defoults
-remember last used db, can be also set during initialization
-TODO:
-    consider managing sql connection to db here
-
-get_wbdata()
-get data from WorldBank for country: GDP stock volume,
-"""
-
 
 class Trader:
+    """Collects financial data.
+    Source of financial data is stooq.pl, which is then stored in SQL db.
+    This is to speed up and limit the internet traffic
+    (web data is scrapped, there is no dedicated API).
+    By defoult trader.sqlite file is used as DB.
+    DB file can be changed during class initialization with 'db' argument
+    Currency info is taken from European bank
+
+    Whole data is divided into groups (tables):
+        - STOCK
+        - INDEXES
+        - ETF - to be implemented
+        - COMODITIES - to be implemented
+        - economic parameters - to be implemented
+    All values are stored by defoult in country currency, can be converted to any currency.
+    Data can be searched by regions or countries. Stocks also an be grouped by indexes
+    Data is also categorized by industries (to be implemented)
+
+    METHODS:
+        - data - collected data (as pandas DataFrame)
+                usefull pandas methods are to_csv and pivot
+        - get - collect data and stores inside class
+        - + - can add data from different queries
+        - pivot - 'excell' like table
+        - plot - quick plots
+    """
+
     def __init__(self, db="", update_symbols=True) -> None:
         # global variables
         self.args = {
@@ -45,7 +61,10 @@ class Trader:
         }
         for arg, val in self.args.items():
             setattr(self, arg, val)
-
+        # set dates to today
+        self.__set_dates__({"today": True})
+        self.data = pd.DataFrame([""])
+        self.is_pivot = False # printing will not reindex columns when table pivoted
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -74,9 +93,44 @@ class Trader:
             if update_symbols:
                 self.__update_sql__()
 
+    def __join__(self, arg: Union[list, str, bool, date]) -> Union[bool, str, date]:
+        if isinstance(arg, list):
+            return ";".join(arg)
+        else:
+            return arg
+
+    def __add__(self, trader: Self) -> Self:
+        if self is trader:
+            print("Cannot add Trader instance to itself")
+            return self
+        # align dates
+        for arg in ["start_date", "end_date"]:
+            setattr(trader, arg, getattr(self, arg))
+        kwargs = {
+            a: self.__join__(getattr(trader, a))
+            for a, v in trader.args.items()
+            if a not in ["start_date", "end_date"] and v != getattr(trader, a)
+        }
+        trader.get(**kwargs)
+        if self.data is None:
+            return trader
+        if trader.data is None:
+            return self
+        self.data = pd.concat([self.data, trader.data])
+        return self
+
+    def __str__(self) -> str:
+        if self.data is None:
+            return ""
+        if not self.is_pivot:
+            dat = self.data.reindex(columns=self.columns)
+            dat = dat.drop_duplicates()
+        else:
+            dat = self.data
+        return dat.__str__()
+
     def __update_sql__(self):
         print("writing INDEX info to db...")
-        start_date, end_date = self.__set_dates__({"today": True})
 
         sector_dat = self.SECTORS["INDEXES"]["data"]
         if "%" not in self.region:
@@ -91,8 +145,8 @@ class Trader:
                 dat = api.stooq(
                     sector_id=region["api"]["id"],  # type: ignore
                     sector_grp=region["api"]["group"],  # type: ignore
-                    from_date=start_date,
-                    to_date=end_date,
+                    from_date=self.start_date,
+                    to_date=self.end_date,
                 )
                 dat = self.__describe_table__(
                     dat=dat,
@@ -104,13 +158,11 @@ class Trader:
                     sys.exit(f"FATAL: wrong data for {region}")
 
                 with alive_bar(len(dat.index)) as bar:
-                    for s, c in dat.loc[:, ["symbol", "country"]].to_records(
-                        index=False
-                    ):
+                    for row in dat.itertuples(index=False):
                         datComp = api.stooq(
-                            component=s,
-                            from_date=start_date,
-                            to_date=end_date,
+                            component=row.symbol,
+                            from_date=self.start_date,
+                            to_date=self.end_date,
                         )
                         if datComp.empty:
                             # no components for index
@@ -118,11 +170,13 @@ class Trader:
                         datComp = self.__describe_table__(
                             dat=datComp,
                             tab="STOCK",
-                            description={"indexes": s, "country": c},
+                            description={"indexes": row.symbol, "country": row.country},
                         )
-                        resp = sql.put(dat=datComp, tab="STOCK", db_file=self.db)
+                        resp = sql.put(
+                            dat=datComp, tab="STOCK", db_file=self.db, index=row.symbol
+                        )
                         if not resp:
-                            sys.exit(f"FATAL: wrong data for {s}")
+                            sys.exit(f"FATAL: wrong data for {row.symbol}")
                         bar()
 
     def __read_sectors__(self, address: Dict) -> Dict:
@@ -190,14 +244,12 @@ class Trader:
 
         args_checked = []
         for arg in args:
-            # remove possible '-' at begining of arg
-            arg_strip = arg.lstrip("-")
             if not strict:
-                r = re.compile(arg_strip + ".*$")
+                r = re.compile(arg + ".*$")
             else:
-                r = re.compile(arg_strip + "$")
+                r = re.compile(arg + "$")
             match = list(filter(r.match, opts))
-            if arg_strip in match:  # we have direct match, possibly also others
+            if arg in match:  # we have direct match, possibly also others
                 args_checked += [arg]
                 continue
             if len(match) == 1:  # match also partially if unique
@@ -317,23 +369,34 @@ class Trader:
         if self.tab == "STOCK":
             opts += ["indexes"]
         opts = [c for c in opts if c not in ["hash"]]
-        self.columns = self.__check_arg__(
-            arg=arg,
+        argL = arg.split(";")
+        if "%" in argL:
+            argL.remove("%")
+            argL += opts
+        self.__check_arg__(
+            arg=";".join(set([a.lstrip("-") for a in argL])),
             arg_name="columns",
             opts=opts,
             tab=self.tab,
             opts_direct=True,
         )
+        # handle columns names with '-' (exclude)
+        minus_cols = [c.lstrip("-") for c in argL if re.match(r"^-.*", c)]
+        plus_cols = [c for c in argL if re.match(r"^[^-].*", c)]
+        if not plus_cols:
+            plus_cols = opts
+        [plus_cols.remove(c) for c in minus_cols if c in plus_cols]
+        self.columns = [c.strip() for c in plus_cols]
 
     def __arg_currency__(self, arg: str) -> None:
         self.currency = self.__check_arg__(
             arg=arg,
             arg_name="currency",
-            opts=["symbol", "name"],
+            opts=["symbol"],
             tab="CURRENCY",
         )[0]
 
-    def get(self, **kwargs) -> Union[pd.DataFrame, str]:
+    def get(self, **kwargs) -> Self:
         """get requested data from db or from web if missing in db
 
         Args:
@@ -353,14 +416,14 @@ class Trader:
         Use '?' to list allowed values
         Use ';' to split multiple values
         Use '-' to exclude value
-            List[symbol]: symbol of the ticker, defoult all
-            List[name]: name of ticker
-            List[components]: list all components of given INDEXES (names)
-            List[country]: filter results by iso2 of country
-            List[region]: region to filter
+            str[symbol]: symbol of the ticker, defoult all
+            str[name]: name of ticker
+            str[components]: list all components of given INDEXES (names)
+            str[country]: filter results by iso2 of country
+            str[region]: region to filter
 
-            List[columns]: limit result to selected columns, defoult all
-            str[currency]: by defoult return in country currency
+            str[columns]: limit result to selected columns, defoult all
+            str[currency]: by defoult return value in country currency
             Date[start_date]: start date for search
             Date[end_date]: end date for search
             str[date_format]: python strftime format, defoult is '%d-%m-%Y'
@@ -368,7 +431,7 @@ class Trader:
 
         if len(kwargs) == 0:
             print(self.get.__doc__)
-            return ""
+            return self
 
         # warn if we have overlaping arguments or unknow argument
         args = []
@@ -415,10 +478,15 @@ class Trader:
             self.__arg_currency__(arg=kwargs.get("currency", self.currency))
         except ValueError as e:
             print(e)
-            return ""
+            return self
 
-        self.update_dates = kwargs.get("update_dates", True)
         self.update_symbols = kwargs.get("update_symbols", False)
+        # block dates updating when not symbol or name selected
+        if any([k in ["name", "symbol"] for k in kwargs.keys()]):
+            self.update_dates = kwargs.get("update_dates", True)
+        else:
+            self.update_dates = False
+
         # GEO tab must be treated specially: update dosen't make sens
         if "GEO" in self.tab:
             self.update_dates = False
@@ -428,93 +496,127 @@ class Trader:
         # if not selected particular names, display last date only
         # and do not update
         self.date_format = kwargs.get("date_format", self.date_format)
-        if not any([a in ["name", "symbol"] for a in kwargs.keys()]):
-            self.start_date, self.end_date = self.__set_dates__()
-            if self.update_dates:
+        if not self.update_dates:
+            self.__set_dates__({"today": True})
+            if self.tab != "GEO":
                 print("Date range changed to last available data.")
                 print(
                     "Select particular symbol(s) or name(s) if you want different dates."
                 )
-                self.update_dates = False
         else:
-            self.start_date, self.end_date = self.__set_dates__(kwargs)
+            self.__set_dates__(kwargs)
+            self.__update_dates__()
 
         if self.update_symbols:
             # set dates to today to limit trafic to avoid blocking
-            # (done in __update_sql__)
+            self.__set_dates__({"today": True})
             print("Date range changed to last working day when updating symbols.")
             self.__update_sql__()
             # new symbols may arrive so update
             self.symbol = sql.get_from_geo(
                 db_file=self.db, tab=self.tab, search=self.region, what=["region"]
             )
-            self.start_date, self.end_date = self.__set_dates__()
             self.update_dates = False
 
-        if self.update_dates:
-            self.__update_dates__()
-
-        dat = sql.query(
+        self.data = sql.query(
             db_file=self.db,
             tab=self.tab,
             symbol=self.symbol,
-            from_date=self.start_date,
-            to_date=self.end_date,
-            columns=self.columns,
+            # query will return last available data if date==None
+            from_date=self.start_date if self.update_dates else None,
+            to_date=self.end_date if self.update_dates else None,
         )
-        if dat is not None:
-            self.__update_currency__(dat)
-            dat = self.convert_currency(dat)
-            print(dat)
-            return ""
 
-        return ""
+        self.__update_currency__()
+        self.convert_currency()
+        return self
 
-    def convert_currency(self, dat: pd.DataFrame) -> pd.DataFrame:
-        if self.currency == "%":
-            return dat
-        cols = dat.columns  # so we can restore
+    def plot(self,normalize = True):
+        pass
+
+    def pivot(self, **kwargs) -> None:
+        """wrapper around pandas.DataFrame.pivot_table function
+        if no args given, will use column 'name' or 'symbol' for new columns
+        and column 'val' as values
+        Other way will forward to pivot_table function
+        """
+        if self.data is None:
+            return
+        self.is_pivot = True
+        self.data.reset_index(drop=True, inplace=True)
+        if not kwargs:
+            if not all([True for c in self.data.columns if c in ['date', 'val']]):
+                return
+            names_from = 'name' if 'name' in self.data.columns else 'symbol'
+            self.data = self.data.pivot_table(columns=names_from, values='val', index='date')
+        else:
+            self.data = self.data.pivot_table(**kwargs)
+
+
+    def convert_currency(self) -> None:
+        if self.currency == "%" or self.data is None:
+            return
+        cols = self.data.columns  # so we can restore
         curFrom = sql.currency_of_country(
-            db_file=self.db, country=dat["country"].to_list()
+            db_file=self.db, country=self.data["country"].to_list()
         )
         curFrom.rename(columns={"symbol": "cur_from"}, inplace=True)
-        dat = dat.merge(
+        self.data = self.data.merge(
             curFrom, left_on="country", right_on="iso2", how="left", suffixes=("", "_y")
         )
-        dat["cur_to"] = self.currency
-        dat["val_from"] = sql.currency_rate(
+        self.data["cur_to"] = self.currency
+        self.data["val_to"] = sql.currency_rate(
             db_file=self.db,
-            dat=dat[["cur_from", "date"]].rename(columns={"cur_from": "symbol"}),
+            dat=self.data[["cur_to", "date"]].rename(columns={"cur_to": "symbol"}),
         )
-        dat["val_to"] = sql.currency_rate(
+        self.data["val_from"] = sql.currency_rate(
             db_file=self.db,
-            dat=dat[["cur_to", "date"]].rename(columns={"cur_to": "symbol"}),
+            dat=self.data[["cur_from", "date"]].rename(columns={"cur_from": "symbol"}),
         )
-        dat["val"] = dat["val"] / dat["val_from"] * dat["val_to"]
-        dat = dat.reindex(columns=cols)
-        return dat
 
-    def __set_dates__(self, dates={}) -> Tuple:
-        if not dates:
-            return None, None
+        self.data["val"] = (
+            self.data["val"] / self.data["val_from"] * self.data["val_to"]
+        )
+        self.data = self.data.reindex(columns=cols)
+        return
+
+    def __set_dates__(self, dates: Dict) -> None:
+        """set start and end date for collecting data
+        if 'today' in dict keys, will set to today (considering working days)
+        other way search 'start_date' and/or 'end_date' in dict and set accordingly
+        """
+        if "today" in dates.keys():
+            self.start_date = biz_date(date.today())
+            self.end_date = biz_date(date.today())
         else:
-            start_date = dates.get("start_date", date.today())
-            end_date = dates.get("end_date", date.today())
-            start_date, end_date = biz_date(
-                start_date, end_date, format=self.date_format
-            )
-            return start_date, end_date
+            if "start_date" in dates.keys():
+                self.start_date = biz_date(dates["start_date"], format=self.date_format)
+            if "end_date" in dates.keys():
+                self.end_date = biz_date(dates["end_date"], format=self.date_format)
+        if self.end_date < self.start_date:
+            self.end_date = self.start_date
+        return
 
-    def __missing_dates__(self, dat: pd.DataFrame) -> pd.DataFrame:
+    def __missing_dates__(
+        self, dat: pd.DataFrame, date_source="self_date"
+    ) -> pd.DataFrame:
         # compare avialable date range with requested dates
+        # requested dates can come from 'self_date' or 'self_data'
         # leave only symbols that needs update
-        min_dates = dat["from_date"] > self.start_date
-        max_dates = dat["to_date"] < self.end_date
+        if date_source == "self_data" and self.data is not None:
+            start_date = self.data["from_date"].min()
+            end_date = self.data["to_date"].max()
+        else:
+            start_date = self.start_date
+            end_date = self.end_date
+
+        min_dates = dat["from_date"] > start_date
+        max_dates = dat["to_date"] < end_date
         dat = dat.loc[min_dates | max_dates]
         # avoid 'holes' in date series
         # adjust from_date or to_date to begining/end existing period
-        dat.loc[:, "from_date"] = min(dat["from_date"].to_list() + [self.start_date])
-        dat.loc[:, "to_date"] = max(dat["to_date"].to_list() + [self.end_date])
+        dat.loc[:, "from_date"] = min(dat["from_date"].to_list() + [start_date])
+        dat.loc[:, "to_date"] = max(dat["to_date"].to_list() + [end_date])
         return dat
 
     def __update_dates__(self) -> None:
@@ -562,12 +664,14 @@ class Trader:
                         sys.exit(f"FATAL: wrong data for '{row.name}'")
                     bar()
 
-    def __update_currency__(self, dat) -> None:
+    def __update_currency__(self) -> None:
         # download missing data
         # assume all symbols are already in sql db
-        if "%" in self.currency:
-            return dat
-        curDF = sql.currency_of_country(db_file=self.db, country=set(datgit ["country"]))
+        if "%" in self.currency or self.data is None:
+            return
+        curDF = sql.currency_of_country(
+            db_file=self.db, country=set(self.data["country"])
+        )
         # include also final currency in update
         curDest = sql.getDF(
             tab="CURRENCY_DESC",
@@ -578,7 +682,7 @@ class Trader:
         curDF = pd.concat(
             [curDF, curDest.reindex(columns=curDF.columns)], ignore_index=True
         )
-        curDF = self.__missing_dates__(curDF)
+        curDF = self.__missing_dates__(curDF, date_source="self_data")
 
         if not curDF.empty:
             for row in curDF.itertuples(index=False):

@@ -1,3 +1,10 @@
+# SQL db
+*.sqlite
+
+# pictures, captcha
+*.png
+
+
 # visual studio code
 .vscode/
 

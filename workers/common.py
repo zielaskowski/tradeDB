@@ -64,34 +64,24 @@ def set_header(file: str, upd_header={}) -> dict:
 
 
 def biz_date(
-    from_date: Union[dt, date, str], to_date: Union[dt, date, str], format="%d-%m-%Y"
-) -> Tuple[date, date]:
+    date_chk: Union[dt, date, str], format="%d-%m-%Y"
+) -> date:
     # first, make sure dates are datetime
-    if isinstance(from_date, date):
-        from_date = dt(from_date.year, from_date.month, from_date.day)
-    if isinstance(to_date, date):
-        to_date = dt(to_date.year, to_date.month, to_date.day)
-    if isinstance(from_date, str):
-        from_datePD = pd.to_datetime(from_date, format=format)
-        from_date = dt(from_datePD.year, from_datePD.month, from_datePD.day)
-    if isinstance(to_date, str):
-        to_datePD = pd.to_datetime(to_date, format=format)
-        to_date = dt(to_datePD.year, to_datePD.month, to_datePD.day)
-
+    if isinstance(date_chk, date):
+        date_chk = dt(date_chk.year, date_chk.month, date_chk.day)
+    if isinstance(date_chk, str):
+        from_datePD = pd.to_datetime(date_chk, format=format)
+        date_chk = dt(from_datePD.year, from_datePD.month, from_datePD.day)
+    
     # convert date to MST and substract one day
     # this way we can be sure all stocks are already closed
     # end we got day closed values from web
-    from_date = from_date.astimezone(pytz.timezone("Canada/Mountain"))
-    to_date = to_date.astimezone(pytz.timezone("Canada/Mountain"))
+    date_chk = date_chk.astimezone(pytz.timezone("Canada/Mountain"))
     # trick to move to previous bizday
     # trnsform such week is from Tu=0 to Mo=6
-    from_date -= timedelta(max(1, (from_date.weekday() + 6) % 7 - 3))
-    to_date -= timedelta(max(1, (to_date.weekday() + 6) % 7 - 3))
+    date_chk -= timedelta(max(1, (date_chk.weekday() + 6) % 7 - 3))
 
-    if to_date < from_date:
-        to_date = from_date
-
-    return (from_date.date(), to_date.date())
+    return date_chk.date()
 
 
 def convert_date(dates: pd.Series) -> pd.Series:
