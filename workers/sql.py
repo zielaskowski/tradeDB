@@ -421,24 +421,6 @@ def __split_list__(lst: str, nel: int) -> list:
     return cmd_split
 
 
-def rm_asset(
-    tab: str, dat: pd.DataFrame, db_file: str
-) -> Union[None, Dict[str, pd.DataFrame]]:
-    records = list(dat.astype("string").to_records(index=False))
-    records = [tuple(__escape_quote__(r)) for r in records]
-    cmd = []
-    for row in records:
-        cmd.append(
-            f"DELETE FROM {tab} WHERE ("
-            + (" AND ").join(
-                [f"{dat.columns[i]} = '{row[i]}'" for i in range(len(row))]
-            )
-            + " )"
-        )
-
-    return __execute_sql__(cmd, db_file)
-
-
 def rm_all(tab: str, symbol: str, db_file: str) -> Union[None, Dict[str, pd.DataFrame]]:
     """
     Remove all instances to asset

@@ -7,8 +7,8 @@ from typing import Union
 from datetime import datetime as dt
 from datetime import date
 import time
-
-from PIL import Image
+import tkinter as tk
+from PIL import Image, ImageTk
 import io
 
 import numpy as np
@@ -55,9 +55,7 @@ def stooq(
     from_dateS = dt.strftime(from_date, "%Y%m%d")  # type: ignore
 
     if sector_id:  # indexes
-        url = (
-            f"https://stooq.pl/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d={from_dateS}"
-        )
+        url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d={from_dateS}"
         # n: long/short names
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
@@ -67,10 +65,12 @@ def stooq(
             data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
-        url = f"https://stooq.pl/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
+        url = (
+            f"https://stooq.com/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
+        )
         data = __scrap_stooq__(url)
     elif component:
-        url = f"https://stooq.pl/q/i/?s={component}&i=0&l=%page%"
+        url = f"https://stooq.com/q/i/?s={component}&i=0&l=%page%"
         # i: show indicators
         data = __scrap_stooq__(url)
 
@@ -94,9 +94,9 @@ def ecb(
     <Dimension EXR_SUFFIX>,
     <TimeDimension TIME_PERIOD>
     """
-    if symbol == 'EUR':
+    if symbol == "EUR":
         date_range = pd.date_range(from_date, end_date)
-        dat = pd.DataFrame({'date':date_range, 'val':1})
+        dat = pd.DataFrame({"date": date_range, "val": 1})
         dat.date = dat.date.dt.date
         return dat
     ecb = sdmx.Request("ECB")
@@ -111,7 +111,7 @@ def ecb(
         print(f"Unknonw symbol: '{symbol}'")
         return pd.DataFrame([""])
 
-    key = ".".join(["D", symbol, "", "", ""]) # D stands for daily
+    key = ".".join(["D", symbol, "", "", ""])  # D stands for daily
     params = {
         "startPeriod": dt.strftime(from_date, "%Y-%m-%d"),
         "endPeriod": dt.strftime(end_date, "%Y-%m-%d"),
@@ -128,6 +128,7 @@ def ecb(
 def __captcha__(page: bs) -> bool:
     # check if we have captcha
     # captcha is trigered with bandwith limit or hit limit
+    global header
     if all(
         [
             page.find(string=txt) is None
@@ -138,20 +139,26 @@ def __captcha__(page: bs) -> bool:
 
     while True:
         # display captcha
-        url = f"https://stooq.pl/q/l/s/i/?{int(time.time()*1000)}"
+        url = f"https://stooq.com/q/l/s/i/?{int(time.time()*1000)}"
         resp = rq.get(url=url, headers=header)
+        header = set_header(
+            file=STOOQ_HEADER,
+            upd_header={"cookie": resp.headers.get("set-cookie", "")},
+        )
+
         with Image.open(io.BytesIO(resp.content)) as img:
             img.save("./dev/captcha.png")  # DEBUG
-            print(
-                "Rewrite the above code\n(contains only uppercase letters and numbers)"
-            )
-            print("use ctr C to break")
-            try:
-                captcha_txt = input("?>")
-            except KeyboardInterrupt:
-                sys.exit(f"\nFATAL: user interuption")
-        url = f"https://stooq.pl/q/l/s/?t={captcha_txt}"
+
+        captcha_txt = captcha_gui()
+        if not captcha_txt:
+            sys.exit(f"\nFATAL: user interuption")
+
+        url = f"https://stooq.com/q/l/s/?t={captcha_txt}"
         resp = rq.get(url=url, headers=header)
+        header = set_header(
+            file=STOOQ_HEADER,
+            upd_header={"cookie": resp.headers.get("set-cookie", "")},
+        )
 
         if resp.content:
             return True
@@ -260,8 +267,12 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
         if pdTab.columns.nlevels > 1:
             pdTab = pdTab.droplevel(0, axis="columns")
 
-        # some basic formatting: str_to_lower
+        # some basic formatting:
+        # str_to_lower
         pdTab.rename(str.lower, axis="columns", inplace=True)
+        # info about dyvident (also others?) breaks table
+        if "no." in pdTab.columns:
+            pdTab = pdTab.dropna(subset="no.")
         # rename columns
         pdTab.rename(
             columns={
@@ -272,12 +283,15 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
                 "zamknięcie": "val",
                 "last": "val",
                 "close": "val",
+                "volume": "vol",
             },
             inplace=True,
         )
         # drop duplicated columns
         # i.e. change is in percent and in absolute value
         pdTab = pdTab.loc[:, list(~pdTab.columns.duplicated())]
+        # drop rows without value
+        pdTab = pdTab.dropna(subset=["val"])
         # convert dates
         pdTab["date"] = convert_date(pdTab["date"])
 
@@ -317,3 +331,56 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
             grpName["Start"].values[grpRow][0] : grpName["End"].values[grpRow][0], :
         ]
     return data
+
+
+def captcha_gui() -> str:
+    """
+    Displays a GUI with a captcha pic
+    and a text box to enter the answer
+    """
+    ans = ""
+
+    def submit(txt):
+        nonlocal ans
+        ans = txt
+        root.destroy()
+
+    root = tk.Tk()
+    root.title("Captcha")
+    # calculate position x and y coordinates
+    sx = root.winfo_screenwidth()
+    sy = root.winfo_screenheight()
+    width = 400
+    height = 200
+    x = (sx / 2) - (width / 2)
+    y = (sy / 2) - (height / 2)
+    root.geometry("%dx%d+%d+%d" % (width, height, x, y))
+
+    # Load the image from the file
+    img = Image.open("./dev/captcha.png")
+    img = ImageTk.PhotoImage(img)
+
+    # Create a label to display the image
+    label = tk.Label(root, image=img)
+    label.pack()
+
+    # add some explanation
+    captcha_text = "Rewrite the above code to continue"
+    captcha_label = tk.Label(root, text=captcha_text)
+    captcha_label.pack()
+
+    # Create a text entry widget for user input
+    entry = tk.Entry(root)
+    entry.pack()
+
+    # Create a button to submit the user input
+    submit_button = tk.Button(root, text="Submit", command=lambda: submit(entry.get()))
+    submit_button.pack()
+    # Create a button to stop
+    submit_button = tk.Button(root, text="Quit", command=lambda: root.destroy())
+    submit_button.pack()
+
+    # Run the main loop
+    root.mainloop()
+
+    return ans.upper()

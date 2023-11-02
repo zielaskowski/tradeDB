@@ -2,10 +2,12 @@ import os
 import re
 import sys
 import itertools
-from datetime import date, timedelta
+from datetime import date
 from typing import Callable, List, Tuple, Union, Dict, Self
 
 import pandas as pd
+from sklearn import preprocessing as prep
+from matplotlib import pyplot as plt
 from alive_progress import alive_bar
 
 
@@ -187,6 +189,12 @@ class Trader:
             sys.exit(str(err))
         return address
 
+    def __escape_regex__(self, arg: str) -> str:
+        """
+        escape regex special characters
+        """
+        return re.sub(r"([.^$*+?{}()|[\]\\])", r"\\\1", arg)
+
     def __check_arg__(
         self,
         arg: str,
@@ -244,6 +252,7 @@ class Trader:
 
         args_checked = []
         for arg in args:
+            arg = self.__escape_regex__(arg)
             if not strict:
                 r = re.compile(arg + ".*$")
             else:
@@ -532,7 +541,17 @@ class Trader:
         return self
 
     def plot(self,normalize = True):
-        pass
+        if self.data is None:
+            return
+        if not self.is_pivot:
+            self.pivot()
+        data_np = self.data.to_numpy()
+        if normalize:
+            data_np = prep.StandardScaler().fit_transform(data_np)
+        fig,ax=plt.subplots()
+        for i in range(len(data_np[0])):
+            ax.plot(data_np[:,i],label=self.data.columns[i])
+        ax.legend()
 
     def pivot(self, **kwargs) -> None:
         """wrapper around pandas.DataFrame.pivot_table function
@@ -551,7 +570,6 @@ class Trader:
             self.data = self.data.pivot_table(columns=names_from, values='val', index='date')
         else:
             self.data = self.data.pivot_table(**kwargs)
-
 
     def convert_currency(self) -> None:
         if self.currency == "%" or self.data is None:
@@ -766,6 +784,7 @@ class Trader:
         - short name (after removing country)
         - country iso code if country found within name
         """
+        names.reset_index(drop=True, inplace=True)
         # special cases
         names = names.apply(lambda x: re.sub(r"WIG.*$", x + r" - POLAND", x))
         names = names.apply(lambda x: re.sub(r"ATX.*$", r"ATX - AUSTRIA", x))

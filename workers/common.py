@@ -103,18 +103,22 @@ def convert_date(dates: pd.Series) -> pd.Series:
     # ignore if no digits in date, probably group name
     # possibly also nan
     dates = dates.apply(lambda x: x if not pd.isna(x) else "1 Sty 1900")
-    dates = dates.apply(lambda x: x if re.match(r"\d+", x) else "1 Sty 1900")
+    dates = dates.apply(lambda x: x if re.search(r"[0-9]", x) else "1 Sty 1900")
 
     d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y %H:%M")  # hh:ss
     d2 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 24 Feb
     d3 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
-    d4 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
-    d5 = date_locale(dates, "pl_PL.utf8", "%d %b %Y")  # 22 Lut 2023
+    d4 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 25 Jan
+    d5 = date_locale(dates, "en_GB.utf8", "%d %b %Y")  # 25 Jan 2023
+    d6 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
+    d7 = date_locale(dates, "pl_PL.utf8", "%d %b %Y")  # 22 Lut 2023
 
     d1 = d1.fillna(d2)
     d1 = d1.fillna(d3)
     d1 = d1.fillna(d4)
     d1 = d1.fillna(d5)
+    d1 = d1.fillna(d6)
+    d1 = d1.fillna(d7)
     d1 = d1.dt.date
     d1 = d1.fillna(" ")
     # if date not recognized

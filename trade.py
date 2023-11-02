@@ -5,6 +5,8 @@ from tradeDB import Trader
 
 trader = Trader(update_symbols=False)
 trader2 = Trader(update_symbols=False)
+print(trader.get(tab="stock",update_symbols=True,region='EUROPE & CENTRAL ASIA '))
+print(trader.get(tab="stock",update_symbols=True,region='NORTH'))
 trader.get()
 trader.get(tab='?')
 print(trader.get(tab='stock',symbol='ale',columns='name;val;vol;date', start_date='20-10-2023')+trader.get(symbol='pkn'))
@@ -12,7 +14,10 @@ ale=trader.get(tab='stock',symbol='ale',columns='name;val;vol;date', start_date=
 pkn=trader2.get(tab='stock',symbol='pkn')
 print(ale+pkn)
 print(ale.pivot())
-#print(trader.get(tab="stock",update_symbols=True,region='EUROPE & CENTRAL ASIA '))
+
+print(trader.get(tab='indexes', symbol='^spx'))
+
+print(trader.get(tab='stock',symbol='pkn', start_date='07-01-2023'))
 print(trader.get(tab="stock",region='EUROPE & CENTRAL ASIA '))
 print(trader.get(tab='stock',symbol='ale;pkn', currency='USD'))
 print(trader.get(tab='stock',symbol='ale;pkn', start_date='01-01-2023',end_date='01-05-2023', currency='USD'))
@@ -69,9 +74,8 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 
-# dywidenty splity i inne cuda zel sie czytaja
-# np 9sie 2023 dla PKN
-
+# align currency when adding 
+# plot do not pivot and pivot do not remember itself
 
 
 # date holes are possible when updating symbols!!!
