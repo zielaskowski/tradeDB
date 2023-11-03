@@ -44,7 +44,7 @@ class Trader:
     """
 
     def __init__(self, db="", update_symbols=True) -> None:
-        # global variables
+        # global variables - defoult
         self.args = {
             "update_dates": True,
             "update_symbols": False,
@@ -63,9 +63,11 @@ class Trader:
         }
         for arg, val in self.args.items():
             setattr(self, arg, val)
-        # set dates to today
+        # set dates to today, but do not inform
+        self.date_change_print = False
         self.__set_dates__({"today": True})
         self.data = pd.DataFrame([""])
+        self.kwargs = {} # store last arguments
         self.is_pivot = False # printing will not reindex columns when table pivoted
         # read table sectors
         self.SECTORS = self.__read_sectors__(
@@ -105,17 +107,15 @@ class Trader:
         if self is trader:
             print("Cannot add Trader instance to itself")
             return self
-        # align dates
-        for arg in ["start_date", "end_date"]:
-            setattr(trader, arg, getattr(self, arg))
-        kwargs = {
-            a: self.__join__(getattr(trader, a))
-            for a, v in trader.args.items()
-            if a not in ["start_date", "end_date"] and v != getattr(trader, a)
-        }
-        trader.get(**kwargs)
+        # align dates and currency
+        # make sure dates will be updated
+        align_args = ["start_date", "end_date", 'currency','update_dates']
+        for arg in align_args:
+            trader.kwargs[arg] = self.__join__(getattr(self, arg))
+        trader.get()
         if self.data is None:
-            return trader
+            self.data=trader.data
+            return self
         if trader.data is None:
             return self
         self.data = pd.concat([self.data, trader.data])
@@ -276,8 +276,9 @@ class Trader:
                 )
             )
         if arg_name == "tab" and args_checked != [self.tab]:
-            # reset all argument if tab changed
-            self.__init__(update_symbols=False)
+            # restore defoult arguments
+            [setattr(self,a,v) for a,v in self.args.items()]
+            self.__set_dates__({"today": True})
         return args_checked
 
     def __arg_tab__(self, arg: str) -> None:
@@ -437,10 +438,16 @@ class Trader:
             Date[end_date]: end date for search
             str[date_format]: python strftime format, defoult is '%d-%m-%Y'
         """
-
-        if len(kwargs) == 0:
+        if not kwargs:
+            kwargs = self.kwargs
+        else:
+            self.kwargs = kwargs
+        if not kwargs and not self.kwargs:
             print(self.get.__doc__)
             return self
+        self.is_pivot = False
+        # trick to not duplicate info
+        self.date_change_print=True
 
         # warn if we have overlaping arguments or unknow argument
         args = []
@@ -507,11 +514,6 @@ class Trader:
         self.date_format = kwargs.get("date_format", self.date_format)
         if not self.update_dates:
             self.__set_dates__({"today": True})
-            if self.tab != "GEO":
-                print("Date range changed to last available data.")
-                print(
-                    "Select particular symbol(s) or name(s) if you want different dates."
-                )
         else:
             self.__set_dates__(kwargs)
             self.__update_dates__()
@@ -548,10 +550,10 @@ class Trader:
         data_np = self.data.to_numpy()
         if normalize:
             data_np = prep.StandardScaler().fit_transform(data_np)
-        fig,ax=plt.subplots()
         for i in range(len(data_np[0])):
-            ax.plot(data_np[:,i],label=self.data.columns[i])
-        ax.legend()
+            plt.plot(data_np[:,i],label=self.data.columns[i])
+        plt.legend()
+        plt.show()
 
     def pivot(self, **kwargs) -> None:
         """wrapper around pandas.DataFrame.pivot_table function
@@ -559,7 +561,7 @@ class Trader:
         and column 'val' as values
         Other way will forward to pivot_table function
         """
-        if self.data is None:
+        if self.data is None or self.is_pivot:
             return
         self.is_pivot = True
         self.data.reset_index(drop=True, inplace=True)
@@ -602,18 +604,32 @@ class Trader:
         """set start and end date for collecting data
         if 'today' in dict keys, will set to today (considering working days)
         other way search 'start_date' and/or 'end_date' in dict and set accordingly
+        if no dates in dict, set 'self.update_dates' to None so will give last available
         """
+        if "start_date" in dates.keys():
+            self.start_date = biz_date(dates["start_date"], format=self.date_format)
+        if "end_date" in dates.keys():
+            self.end_date = biz_date(dates["end_date"], format=self.date_format)
         if "today" in dates.keys():
             self.start_date = biz_date(date.today())
             self.end_date = biz_date(date.today())
-        else:
-            if "start_date" in dates.keys():
-                self.start_date = biz_date(dates["start_date"], format=self.date_format)
-            if "end_date" in dates.keys():
-                self.end_date = biz_date(dates["end_date"], format=self.date_format)
+            if self.date_change_print:
+                self.__date_change_info__()
+        if 'start_date' not in dates.keys() and 'end_date' not in dates.keys():
+            if self.date_change_print:
+                self.__date_change_info__()
+            self.update_dates = False
         if self.end_date < self.start_date:
             self.end_date = self.start_date
         return
+    
+    def __date_change_info__(self)-> None:
+        if self.tab != "GEO":
+            print("Date range changed to last available data.")
+            print(
+                "Select particular symbol, name, and/or date range if you want different dates."
+            )
+            self.date_change_print = False
 
     def __missing_dates__(
         self, dat: pd.DataFrame, date_source="self_date"
@@ -652,12 +668,12 @@ class Trader:
         symbolDF = self.__missing_dates__(symbolDF)
 
         if not symbolDF.empty:
-            info = print
+            info = True
             with alive_bar(len(symbolDF)) as bar:
                 for row in symbolDF.itertuples(index=False):
                     if info:
-                        info("...updating dates")
-                        info = None
+                        print("...updating dates")
+                        info = False
                     dat = api.stooq(
                         from_date=row.from_date,
                         to_date=row.to_date,

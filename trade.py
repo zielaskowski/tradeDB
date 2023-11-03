@@ -3,10 +3,28 @@
 from tradeDB import Trader
 
 
+ale = Trader()
+pkn=Trader()
+ale.get(tab="STOCK", name="ALLEGRO", start_date="01-05-2023", currency="USD")
+pkn.get(tab="STOCK", symbol="PKN")
+print(pkn)
+ale+pkn
+ale.plot()
+print(ale)
+
+ale = Trader()
+pkn=Trader()
+ale.get(tab="STOCK", name="ALLEGRO", start_date="01-05-2023", currency="USD")
+pkn.get(tab="STOCK", country='pl')
+ale+pkn
+ale.plot()
+print(ale)
+
+
 trader = Trader(update_symbols=False)
 trader2 = Trader(update_symbols=False)
-print(trader.get(tab="stock",update_symbols=True,region='EUROPE & CENTRAL ASIA '))
-print(trader.get(tab="stock",update_symbols=True,region='NORTH'))
+#print(trader.get(tab="stock",update_symbols=True,region='EUROPE & CENTRAL ASIA '))
+#print(trader.get(tab="stock",update_symbols=True,region='NORTH'))
 trader.get()
 trader.get(tab='?')
 print(trader.get(tab='stock',symbol='ale',columns='name;val;vol;date', start_date='20-10-2023')+trader.get(symbol='pkn'))
@@ -74,9 +92,8 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 
-# align currency when adding 
-# plot do not pivot and pivot do not remember itself
 
+# currency translation fail for big data ranges
 
 # date holes are possible when updating symbols!!!
 # check requested dates also between max and min date!
