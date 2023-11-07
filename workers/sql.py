@@ -54,7 +54,7 @@ def query(
     # get tab columns (without hash)
     cols = tab_columns(tab=tab, db_file=db_file)
     cols += tab_columns(tab=tab + desc, db_file=db_file)
-    columns_txt = ",".join(set([c for c in cols if c != 'hash']))
+    columns_txt = ",".join(set([c for c in cols if c != "hash"]))
 
     cmd = f"""SELECT {columns_txt}
 	        FROM {tab+desc} td"""
@@ -213,7 +213,7 @@ def tab_exists(tab: str) -> bool:
     return True
 
 
-def put(dat: pd.DataFrame, tab: str, db_file: str, index='') -> Union[Dict, None]:
+def put(dat: pd.DataFrame, tab: str, db_file: str, index="") -> Union[Dict, None]:
     # put DataFrame into sql at table=tab
     # if description table exists, writes first to 'tab_desc'
     # takes from DataFrame only columns present in sql table
@@ -250,7 +250,9 @@ def put(dat: pd.DataFrame, tab: str, db_file: str, index='') -> Union[Dict, None
         dat = dat.merge(known, how="left", on=["hash", "date"], suffixes=("", "_known"))
         # fill new data with what already known
         for c in known.columns:
-            if not re.search("(date)|(val)|(symbol)|(name)|(hash)|(start_date)|(to_date)", c):
+            if not re.search(
+                "(date)|(val)|(symbol)|(name)|(hash)|(start_date)|(to_date)", c
+            ):
                 dat[c] = dat[c].fillna(dat[c + "_known"])
 
     # add new data to sql

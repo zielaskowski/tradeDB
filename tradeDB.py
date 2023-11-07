@@ -7,6 +7,9 @@ from typing import Callable, List, Tuple, Union, Dict, Self
 
 import pandas as pd
 from sklearn import preprocessing as prep
+import matplotlib
+
+matplotlib.use("Agg")  # necessery for debuging in VS code (not-interactive mode)
 from matplotlib import pyplot as plt
 from alive_progress import alive_bar
 
@@ -67,8 +70,8 @@ class Trader:
         self.date_change_print = False
         self.__set_dates__({"today": True})
         self.data = pd.DataFrame([""])
-        self.kwargs = {} # store last arguments
-        self.is_pivot = False # printing will not reindex columns when table pivoted
+        self.kwargs = {}  # store last arguments
+        self.is_pivot = False  # printing will not reindex columns when table pivoted
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -109,12 +112,15 @@ class Trader:
             return self
         # align dates and currency
         # make sure dates will be updated
-        align_args = ["start_date", "end_date", 'currency','update_dates']
+        align_args = ["currency", "update_dates"]
         for arg in align_args:
             trader.kwargs[arg] = self.__join__(getattr(self, arg))
+        # dates must be injected, other way bix_date will shit it
+        trader.start_date = self.start_date
+        trader.end_date = self.end_date
         trader.get()
         if self.data is None:
-            self.data=trader.data
+            self.data = trader.data
             return self
         if trader.data is None:
             return self
@@ -275,9 +281,10 @@ class Trader:
                     f"Wrong argument '{arg_name}' value: {arg}.\nPossible values are: {opts}"
                 )
             )
-        if arg_name == "tab" and args_checked != [self.tab]:
+        if arg_name == "tab" and args_checked != [self.tab] and self.tab != "":
             # restore defoult arguments
-            [setattr(self,a,v) for a,v in self.args.items()]
+            [setattr(self, a, v) for a, v in self.args.items()]
+            self.date_change_print = False
             self.__set_dates__({"today": True})
         return args_checked
 
@@ -447,7 +454,7 @@ class Trader:
             return self
         self.is_pivot = False
         # trick to not duplicate info
-        self.date_change_print=True
+        self.date_change_print = True
 
         # warn if we have overlaping arguments or unknow argument
         args = []
@@ -512,16 +519,13 @@ class Trader:
         # if not selected particular names, display last date only
         # and do not update
         self.date_format = kwargs.get("date_format", self.date_format)
-        if not self.update_dates:
-            self.__set_dates__({"today": True})
-        else:
+        if self.update_dates:
             self.__set_dates__(kwargs)
             self.__update_dates__()
 
         if self.update_symbols:
             # set dates to today to limit trafic to avoid blocking
             self.__set_dates__({"today": True})
-            print("Date range changed to last working day when updating symbols.")
             self.__update_sql__()
             # new symbols may arrive so update
             self.symbol = sql.get_from_geo(
@@ -542,7 +546,7 @@ class Trader:
         self.convert_currency()
         return self
 
-    def plot(self,normalize = True):
+    def plot(self, normalize=True):
         if self.data is None:
             return
         if not self.is_pivot:
@@ -551,11 +555,11 @@ class Trader:
         if normalize:
             data_np = prep.StandardScaler().fit_transform(data_np)
         for i in range(len(data_np[0])):
-            plt.plot(data_np[:,i],label=self.data.columns[i])
+            plt.plot(data_np[:, i], label=self.data.columns[i])
         plt.legend()
         plt.show()
 
-    def pivot(self, **kwargs) -> None:
+    def pivot(self, **kwargs) -> Union[None, pd.DataFrame]:
         """wrapper around pandas.DataFrame.pivot_table function
         if no args given, will use column 'name' or 'symbol' for new columns
         and column 'val' as values
@@ -566,12 +570,15 @@ class Trader:
         self.is_pivot = True
         self.data.reset_index(drop=True, inplace=True)
         if not kwargs:
-            if not all([True for c in self.data.columns if c in ['date', 'val']]):
+            if not all([True for c in self.data.columns if c in ["date", "val"]]):
                 return
-            names_from = 'name' if 'name' in self.data.columns else 'symbol'
-            self.data = self.data.pivot_table(columns=names_from, values='val', index='date')
+            names_from = "name" if "name" in self.data.columns else "symbol"
+            self.data = self.data.pivot_table(
+                columns=names_from, values="val", index="date"
+            )
         else:
             self.data = self.data.pivot_table(**kwargs)
+        return self.data
 
     def convert_currency(self) -> None:
         if self.currency == "%" or self.data is None:
@@ -608,28 +615,33 @@ class Trader:
         """
         if "start_date" in dates.keys():
             self.start_date = biz_date(dates["start_date"], format=self.date_format)
+            self.date_change_print = False
         if "end_date" in dates.keys():
             self.end_date = biz_date(dates["end_date"], format=self.date_format)
+            self.date_change_print = False
+        bz_today = biz_date(date.today())
         if "today" in dates.keys():
-            self.start_date = biz_date(date.today())
-            self.end_date = biz_date(date.today())
-            if self.date_change_print:
-                self.__date_change_info__()
-        if 'start_date' not in dates.keys() and 'end_date' not in dates.keys():
-            if self.date_change_print:
-                self.__date_change_info__()
-            self.update_dates = False
+            self.start_date = bz_today
+            self.end_date = bz_today
+        if self.start_date == bz_today and self.end_date == bz_today:
+            self.__date_change_info__()
+
         if self.end_date < self.start_date:
             self.end_date = self.start_date
         return
-    
-    def __date_change_info__(self)-> None:
-        if self.tab != "GEO":
-            print("Date range changed to last available data.")
-            print(
-                "Select particular symbol, name, and/or date range if you want different dates."
-            )
-            self.date_change_print = False
+
+    def __date_change_info__(self) -> None:
+        if self.tab == "GEO" or not self.date_change_print:
+            return
+        if self.update_symbols:
+            print("Date range changed to last working day when updating symbols.")
+        if not self.update_dates:
+            print("Date range changed to last locally available date.")
+            print("Select particular symbol, name if you want different dates.")
+        if self.update_dates:
+            print("Date range set to last working day.")
+            print("Select start_date and/or end_date if you want different dates.")
+        self.date_change_print = False
 
     def __missing_dates__(
         self, dat: pd.DataFrame, date_source="self_date"
@@ -638,12 +650,11 @@ class Trader:
         # requested dates can come from 'self_date' or 'self_data'
         # leave only symbols that needs update
         if date_source == "self_data" and self.data is not None:
-            start_date = self.data["from_date"].min()
-            end_date = self.data["to_date"].max()
+            start_date = self.data["date"].min()
+            end_date = self.data["date"].max()
         else:
             start_date = self.start_date
             end_date = self.end_date
-
         min_dates = dat["from_date"] > start_date
         max_dates = dat["to_date"] < end_date
         dat = dat.loc[min_dates | max_dates]
@@ -719,18 +730,24 @@ class Trader:
         curDF = self.__missing_dates__(curDF, date_source="self_data")
 
         if not curDF.empty:
-            for row in curDF.itertuples(index=False):
-                cur_val = api.ecb(
-                    from_date=row.from_date, end_date=row.to_date, symbol=row.symbol
-                )
-                cur_val = self.__describe_table__(
-                    dat=cur_val,
-                    tab="CURRENCY",
-                    description=row._asdict(),
-                )
-                resp = sql.put(dat=cur_val, tab="CURRENCY", db_file=self.db)
-                if not resp:
-                    sys.exit(f"FATAL: wrong data for '{row.symbol}'")
+            info = True
+            with alive_bar(len(curDF)) as bar:
+                for row in curDF.itertuples(index=False):
+                    if info:
+                        print("...updating curremcy")
+                        info = False
+                    cur_val = api.ecb(
+                        from_date=row.from_date, end_date=row.to_date, symbol=row.symbol
+                    )
+                    cur_val = self.__describe_table__(
+                        dat=cur_val,
+                        tab="CURRENCY",
+                        description=row._asdict(),
+                    )
+                    resp = sql.put(dat=cur_val, tab="CURRENCY", db_file=self.db)
+                    if not resp:
+                        sys.exit(f"FATAL: wrong data for '{row.symbol}'")
+                bar()
 
     def __describe_table__(
         self, dat: pd.DataFrame, tab: str, description: dict

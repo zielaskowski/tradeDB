@@ -3,6 +3,7 @@
 from tradeDB import Trader
 
 
+
 ale = Trader()
 pkn=Trader()
 ale.get(tab="STOCK", name="ALLEGRO", start_date="01-05-2023", currency="USD")
@@ -36,6 +37,7 @@ print(ale.pivot())
 print(trader.get(tab='indexes', symbol='^spx'))
 
 print(trader.get(tab='stock',symbol='pkn', start_date='07-01-2023'))
+print(trader.get(tab='stock',symbol='pkn', start_date='07-01-2013', currency='USD'))
 print(trader.get(tab="stock",region='EUROPE & CENTRAL ASIA '))
 print(trader.get(tab='stock',symbol='ale;pkn', currency='USD'))
 print(trader.get(tab='stock',symbol='ale;pkn', start_date='01-01-2023',end_date='01-05-2023', currency='USD'))
@@ -92,8 +94,8 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 
+# convert_currency fail for big data ranges
 
-# currency translation fail for big data ranges
 
 # date holes are possible when updating symbols!!!
 # check requested dates also between max and min date!
