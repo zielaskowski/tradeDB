@@ -69,7 +69,7 @@ class Trader:
         # set dates to today, but do not inform
         self.date_change_print = False
         self.__set_dates__({"today": True})
-        self.data = pd.DataFrame([""])
+        self.data = pd.DataFrame()
         self.kwargs = {}  # store last arguments
         self.is_pivot = False  # printing will not reindex columns when table pivoted
         # read table sectors
@@ -94,17 +94,11 @@ class Trader:
                 print(f"path '{p}' dosen't exists. Using {os.path.abspath(p)}")
             self.db = os.path.join(p, f)
         # make sure file is corrcet, also create if missing
-        if not sql.check_sql(self.db):
-            # populate indexes
-            ##################
-            if update_symbols:
-                self.__update_sql__()
+        if not sql.check_sql(self.db) and update_symbols:
+            self.__update_sql__()
 
     def __join__(self, arg: Union[list, str, bool, date]) -> Union[bool, str, date]:
-        if isinstance(arg, list):
-            return ";".join(arg)
-        else:
-            return arg
+        return ";".join(arg) if isinstance(arg, list) else arg
 
     def __add__(self, trader: Self) -> Self:
         if self is trader:
@@ -119,16 +113,16 @@ class Trader:
         trader.start_date = self.start_date
         trader.end_date = self.end_date
         trader.get()
-        if self.data is None:
+        if self.data.empty:
             self.data = trader.data
             return self
-        if trader.data is None:
+        if trader.data.empty:
             return self
         self.data = pd.concat([self.data, trader.data])
         return self
 
     def __str__(self) -> str:
-        if self.data is None:
+        if self.data.empty:
             return ""
         if not self.is_pivot:
             dat = self.data.reindex(columns=self.columns)
@@ -259,10 +253,7 @@ class Trader:
         args_checked = []
         for arg in args:
             arg = self.__escape_regex__(arg)
-            if not strict:
-                r = re.compile(arg + ".*$")
-            else:
-                r = re.compile(arg + "$")
+            r = re.compile(arg + "$") if strict else re.compile(arg + ".*$")
             match = list(filter(r.match, opts))
             if arg in match:  # we have direct match, possibly also others
                 args_checked += [arg]
@@ -365,7 +356,7 @@ class Trader:
 
     def __arg_region__(self, arg: str) -> None:
         sector_dat = self.SECTORS["INDEXES"]["data"]
-        opts = list(set([v["description"]["region"] for _, v in sector_dat.items()]))
+        opts = list({v["description"]["region"] for v in sector_dat.values()})
         self.region = self.__check_arg__(
             arg=arg,
             arg_name="region",
@@ -391,7 +382,7 @@ class Trader:
             argL.remove("%")
             argL += opts
         self.__check_arg__(
-            arg=";".join(set([a.lstrip("-") for a in argL])),
+            arg=";".join({a.lstrip("-") for a in argL}),
             arg_name="columns",
             opts=opts,
             tab=self.tab,
@@ -399,9 +390,7 @@ class Trader:
         )
         # handle columns names with '-' (exclude)
         minus_cols = [c.lstrip("-") for c in argL if re.match(r"^-.*", c)]
-        plus_cols = [c for c in argL if re.match(r"^[^-].*", c)]
-        if not plus_cols:
-            plus_cols = opts
+        plus_cols = [c for c in argL if re.match(r"^[^-].*", c)] or opts
         [plus_cols.remove(c) for c in minus_cols if c in plus_cols]
         self.columns = [c.strip() for c in plus_cols]
 
@@ -505,7 +494,7 @@ class Trader:
 
         self.update_symbols = kwargs.get("update_symbols", False)
         # block dates updating when not symbol or name selected
-        if any([k in ["name", "symbol"] for k in kwargs.keys()]):
+        if any(k in ["name", "symbol"] for k in kwargs.keys()):
             self.update_dates = kwargs.get("update_dates", True)
         else:
             self.update_dates = False
@@ -547,7 +536,7 @@ class Trader:
         return self
 
     def plot(self, normalize=True):
-        if self.data is None:
+        if self.data.empty:
             return
         if not self.is_pivot:
             self.pivot()
@@ -565,12 +554,12 @@ class Trader:
         and column 'val' as values
         Other way will forward to pivot_table function
         """
-        if self.data is None or self.is_pivot:
+        if self.data.empty or self.is_pivot:
             return
         self.is_pivot = True
         self.data.reset_index(drop=True, inplace=True)
         if not kwargs:
-            if not all([True for c in self.data.columns if c in ["date", "val"]]):
+            if not all(True for c in self.data.columns if c in ["date", "val"]):
                 return
             names_from = "name" if "name" in self.data.columns else "symbol"
             self.data = self.data.pivot_table(
@@ -581,24 +570,37 @@ class Trader:
         return self.data
 
     def convert_currency(self) -> None:
-        if self.currency == "%" or self.data is None:
+        if self.currency == "%" or self.data.empty:
             return
+
+        def get_currency_rate(column_symb: str, column_val: str) -> pd.DataFrame:
+            return sql.currency_rate(
+                db_file=self.db,
+                dat=self.data[[column_symb, "date"]].rename(
+                    columns={column_symb: "symbol"}
+                ),
+            ).rename(columns={"val": column_val, "symbol": column_symb})
+
+        def get_currency_of_country():
+            return sql.currency_of_country(
+                db_file=self.db, country=set(self.data["country"].to_list())
+            ).rename(columns={"symbol": "cur_from"})
+
         cols = self.data.columns  # so we can restore
-        curFrom = sql.currency_of_country(
-            db_file=self.db, country=self.data["country"].to_list()
-        )
-        curFrom.rename(columns={"symbol": "cur_from"}, inplace=True)
+        curFrom = get_currency_of_country()
         self.data = self.data.merge(
             curFrom, left_on="country", right_on="iso2", how="left", suffixes=("", "_y")
         )
         self.data["cur_to"] = self.currency
-        self.data["val_to"] = sql.currency_rate(
-            db_file=self.db,
-            dat=self.data[["cur_to", "date"]].rename(columns={"cur_to": "symbol"}),
+        self.data = self.data.merge(
+            get_currency_rate(column_symb="cur_to", column_val="val_to"),
+            on=["date", "cur_to"],
+            how="left",
         )
-        self.data["val_from"] = sql.currency_rate(
-            db_file=self.db,
-            dat=self.data[["cur_from", "date"]].rename(columns={"cur_from": "symbol"}),
+        self.data = self.data.merge(
+            get_currency_rate(column_symb="cur_from", column_val="val_from"),
+            on=["date", "cur_from"],
+            how="left",
         )
 
         self.data["val"] = (
@@ -626,8 +628,7 @@ class Trader:
         if self.start_date == bz_today and self.end_date == bz_today:
             self.__date_change_info__()
 
-        if self.end_date < self.start_date:
-            self.end_date = self.start_date
+        self.end_date = max(self.end_date, self.start_date)
         return
 
     def __date_change_info__(self) -> None:
@@ -649,7 +650,7 @@ class Trader:
         # compare avialable date range with requested dates
         # requested dates can come from 'self_date' or 'self_data'
         # leave only symbols that needs update
-        if date_source == "self_data" and self.data is not None:
+        if date_source == "self_data" and self.data.empty:
             start_date = self.data["date"].min()
             end_date = self.data["date"].max()
         else:
@@ -712,7 +713,7 @@ class Trader:
     def __update_currency__(self) -> None:
         # download missing data
         # assume all symbols are already in sql db
-        if "%" in self.currency or self.data is None:
+        if "%" in self.currency or self.data.empty:
             return
         curDF = sql.currency_of_country(
             db_file=self.db, country=set(self.data["country"])
@@ -779,13 +780,10 @@ class Trader:
         ######
         def minmax(func: Callable, dat: pd.DataFrame) -> List:
             minmax_date = []
-            if func.__name__ == "min":
-                col = "from_date"
-            else:
-                col = "to_date"
+            col = "from_date" if func.__name__ == "min" else "to_date"
             for h in dat["hash"]:
                 date_sql = sql.getDF(
-                    tab=tab + "_DESC",
+                    tab=f"{tab}_DESC",
                     get=[col],
                     search=[h],
                     where=["hash"],

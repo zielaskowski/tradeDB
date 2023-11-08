@@ -26,7 +26,7 @@ def query(
     symbol: List[str],
     from_date: Union[None, date],
     to_date: Union[None, date],
-) -> Union[None, pd.DataFrame]:
+) -> pd.DataFrame:
     """get data from sql db about symbol,
     including relevant data from description tab
     (GEO tab treated separately)
@@ -41,7 +41,7 @@ def query(
         to_date: last date of data (including). If empty string, return only last available
     """
     if not check_sql(db_file):
-        return
+        return pd.DataFrame()
     symbol = __escape_quote__(symbol)
 
     if tab == "GEO":
@@ -54,7 +54,7 @@ def query(
     # get tab columns (without hash)
     cols = tab_columns(tab=tab, db_file=db_file)
     cols += tab_columns(tab=tab + desc, db_file=db_file)
-    columns_txt = ",".join(set([c for c in cols if c != "hash"]))
+    columns_txt = ",".join({c for c in cols if c != "hash"})
 
     cmd = f"""SELECT {columns_txt}
 	        FROM {tab+desc} td"""
@@ -68,23 +68,22 @@ def query(
     cmd += ")"
 
     if tab != "GEO":
-        if not to_date or not from_date:
-            cmd += r"AND strftime('%s',t.date)=strftime('%s',td.to_date)"
-        else:
+        if to_date and from_date:
             cmd += f"""AND strftime('%s',date) BETWEEN
                         strftime('%s','{from_date}') AND strftime('%s','{to_date}')
                     """
 
+        else:
+            cmd += r"AND strftime('%s',t.date)=strftime('%s',td.to_date)"
     resp = __execute_sql__([cmd], db_file)
     if resp is None or resp[cmd].empty:
-        return
-    else:
-        resp = resp[cmd]
-        if tab == "STOCK":
-            idx = stock_index(db_file=db_file, search=resp.loc[:, "symbol"].to_list())
-            if idx is not None:
-                resp = resp.merge(idx, how="left", on="symbol")
-        return resp.drop_duplicates()
+        return pd.DataFrame()
+    resp = resp[cmd]
+    if tab == "STOCK":
+        idx = stock_index(db_file=db_file, search=resp.loc[:, "symbol"].to_list())
+        if idx is not None:
+            resp = resp.merge(idx, how="left", on="symbol")
+    return resp.drop_duplicates()
 
 
 def get_from_geo(db_file: str, tab: str, search: List, what: List[str]) -> List[str]:
@@ -109,16 +108,16 @@ def get_from_geo(db_file: str, tab: str, search: List, what: List[str]) -> List[
     cmd += ")"
 
     resp = __execute_sql__([cmd], db_file=db_file)
-    if resp is None or resp[cmd].empty:
-        return []
-    return resp[cmd]["symbol"].to_list()
+    return [] if resp is None or resp[cmd].empty else resp[cmd]["symbol"].to_list()
 
 
 def index_components(db_file: str, search: List) -> List[str]:
     """
     Return components of given index name.
     """
-    cmd = f"""SELECT
+    search = __escape_quote__(search)
+    cmd = (
+        """SELECT
                 s.symbol
             FROM
                 STOCK_DESC s
@@ -126,15 +125,13 @@ def index_components(db_file: str, search: List) -> List[str]:
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
                 WHERE 
         """
-    search = __escape_quote__(search)
-    cmd += "("
-    cmd += "".join([f"i.name LIKE '" + s + "' OR " for s in search])
-    cmd += f"i.name LIKE 'none' "  # just to finish last OR
+        + "("
+    )
+    cmd += "".join(["i.name LIKE '" + s + "' OR " for s in search])
+    cmd += "i.name LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
-    if resp is None or resp[cmd].empty:
-        return []
-    return resp[cmd]["symbol"].to_list()
+    return [] if resp is None or resp[cmd].empty else resp[cmd]["symbol"].to_list()
 
 
 def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
@@ -143,7 +140,9 @@ def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
     Use stock symbol in search
     Return DataFrame with columns [indexes] and [stock]
     """
-    cmd = """SELECT
+    search = __escape_quote__(search)
+    cmd = (
+        """SELECT
                 i.name AS 'indexes', s.symbol AS 'symbol'
             FROM
                 STOCK_DESC s
@@ -151,10 +150,10 @@ def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
             INNER JOIN COMPONENTS c on s.hash = c.stock_hash
                 WHERE 
         """
-    search = __escape_quote__(search)
-    cmd += "("
-    cmd += "".join([f"s.symbol LIKE '" + s + "' OR " for s in search])
-    cmd += f"s.symbol LIKE 'none' "  # just to finish last OR
+        + "("
+    )
+    cmd += "".join(["s.symbol LIKE '" + s + "' OR " for s in search])
+    cmd += "s.symbol LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp is None or resp[cmd].empty:
@@ -172,8 +171,8 @@ def currency_of_country(db_file: str, country: Union[List, set]) -> pd.DataFrame
                 WHERE
         """
     cmd += "("
-    cmd += "".join([f"g.iso2 LIKE '" + c + "' OR " for c in country])
-    cmd += f"g.iso2 LIKE 'none' "  # just to finish last OR
+    cmd += "".join(["g.iso2 LIKE '" + c + "' OR " for c in country])
+    cmd += "g.iso2 LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)
     if resp is None or resp[cmd].empty:
@@ -181,26 +180,24 @@ def currency_of_country(db_file: str, country: Union[List, set]) -> pd.DataFrame
     return resp[cmd].drop(["currency", "last_upd", "hash"], axis="columns")
 
 
-def currency_rate(db_file: str, dat: pd.DataFrame) -> list:
+def currency_rate(db_file: str, dat: pd.DataFrame) -> pd.DataFrame:
     """
     Return currency rate for cur_symbol | date
     """
-    cmd = """SELECT c.val, c.date, cd.symbol
+    dat = dat.drop_duplicates(ignore_index=True)
+    cmd = [
+        f"""SELECT c.val, c.date, cd.symbol
             FROM CURRENCY c
             INNER JOIN CURRENCY_DESC cd ON c.hash=cd.hash
                 WHERE
-        """
-    cmd += " OR ".join(
-        [
-            f"(cd.symbol LIKE '{row.symbol}' AND strftime('%s',c.date)=strftime('%s','{row.date}') )"
-            for row in dat.itertuples(index=False)
-        ]
-    )
-    resp = __execute_sql__([cmd], db_file=db_file)
-    if resp is None or resp[cmd].empty:
-        return []
-    dat = dat.merge(resp[cmd], how="left", on=["date", "symbol"])
-    return dat["val"].to_list()
+            (cd.symbol LIKE '{row.symbol}' AND strftime('%s',c.date)=strftime('%s','{row.date}') )
+            """
+        for row in dat.itertuples(index=False)
+    ]
+    resp = __execute_sql__(cmd, db_file=db_file)
+    if resp is None or resp[cmd[0]].empty:
+        return pd.DataFrame()
+    return pd.concat(resp.values(), ignore_index=True)
 
 
 def tab_exists(tab: str) -> bool:
@@ -228,12 +225,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str, index="") -> Union[Dict, None
     )
 
     sql_scheme = read_json(SQL_file)
-    if tab + "_DESC" in sql_scheme.keys():
-        # description must be first becouse HASH is primary key there
-        tabL = [tab + "_DESC", tab]
-    else:
-        tabL = [tab]
-
+    tabL = [f"{tab}_DESC", tab] if f"{tab}_DESC" in sql_scheme.keys() else [tab]
     # merge with what we already know
     known = query(
         db_file=db_file,
@@ -242,7 +234,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str, index="") -> Union[Dict, None
         from_date=date(1900, 1, 1),
         to_date=date.today(),
     )
-    if known is not None and not known.empty:
+    if not known.empty:
         known["hash"] = hash_table(known, tab)  # add hash column
 
         # compare new data with what present in sql
@@ -272,17 +264,17 @@ def put(dat: pd.DataFrame, tab: str, db_file: str, index="") -> Union[Dict, None
     # sql will handle unique rows
     ####
     if index:
-        if hash := getL(
+        if hashes := getL(
             db_file=db_file,
             tab="INDEXES_DESC",
             get=["hash"],
             search=[index],
             where=["symbol"],
         ):
-            hash = hash[0]
+            hashes = hashes[0]
         else:
             return
-        components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hash})
+        components = pd.DataFrame({"stock_hash": dat["hash"], "indexes_hash": hashes})
         resp = __write_table__(dat=components, tab="COMPONENTS", db_file=db_file)
         return resp
     return {"put": "success"}
@@ -320,9 +312,7 @@ def getL(**kwargs) -> List:
     """
     resp = get(**kwargs)
     df = list(resp.values())[0]
-    if df.empty:
-        return []
-    return list(df.to_dict(orient="list").values())[0]
+    return [] if df.empty else list(df.to_dict(orient="list").values())[0]
 
 
 def get(
@@ -331,7 +321,7 @@ def get(
     get: Union[List[str], Set] = ["%"],
     search: Union[List[str], Set] = ["%"],
     where: Union[List[str], Set] = ["%"],
-) -> Dict[str, pd.DataFrame]:
+) -> Dict[str, pd.DataFrame]:  # sourcery skip: default-mutable-arg
     """get info from table
     return as Dict:
     - each key for column searched,
@@ -356,7 +346,7 @@ def get(
         where = all_cols
     if get[0] == "%":
         get = all_cols
-    if not all(g in all_cols for g in get):
+    if any(g not in all_cols for g in get):
         print(f"Not correct get='{get}' argument.")
         print(f"possible options: {all_cols}")
         return {}
@@ -379,35 +369,30 @@ def get(
 def __split_cmd__(script: list) -> List[List]:
     # split OR logic chain into 500 len elements
     # there is limit of 1000 tree depth
-    resp = [[]]
-    for cmd in script:
-        cmd = re.sub(r"[\t\n\r]*", "", cmd)  # remove newline and tabs
-        cmd1_re = (
-            r"(^.*WHERE[^\(]*)"  # take all from begining to 'WHERE' just before '('
-        )
-        cmd2_re = (
-            r"(\([^\()]*\))"  # everything (without parenthesis) between parenthesis
-        )
-        cmd3_re = r"((?<=\)).+$)"  # everything from last parenthesis to end
-        reMatch = re.findall(f"{cmd1_re}|{cmd2_re}|{cmd3_re}", cmd)
-        reMatch = ["".join(t) for t in reMatch]  # remove empty elements from list
-        logic_tree = (
-            re.sub(r"'[^']*'", "stock_name", reMatch[1]) if len(reMatch) > 1 else ""
-        )  # AND can be within asset name
-        lenOR = len(re.findall(" OR ", logic_tree)) if len(reMatch) > 1 else 0
-        lenAND = len(re.findall(" AND ", logic_tree)) if len(reMatch) > 1 else 0
-        if lenAND != 0:
-            # not possible to split AND chain
-            if lenAND + lenOR > 500:
-                sys.exit("FATAL: sql cmd exceeded length limit")
+    def split_logic_chain(cmd):
+        cmd = cmd.replace("\t", "").replace("\n", "").replace("\r", "")
+        where_index = cmd.find("WHERE")
+        if where_index == -1:
+            return [cmd]
+        cmd1 = cmd[:where_index]
+        cmd2 = cmd[where_index:]
+        cmd3 = cmd2[cmd2.rfind(")") + 1 :]
+        cmd2 = cmd2[: cmd2.rfind(")") + 1]
+        logic_tree = cmd2.replace("'", "stock_name")
+        lenOR = logic_tree.count(" OR ")
+        lenAND = logic_tree.count(" AND ")
+        if lenAND != 0 and lenAND + lenOR > 500:
+            raise ValueError("FATAL: sql cmd exceeded length limit")
         if lenOR > 500:
-            reMatch.append("") if len(reMatch) < 3 else None
-            cmd_new = [
-                reMatch[0] + c + reMatch[2] for c in __split_list__(reMatch[1], 500)
-            ]
-            resp.append(cmd_new)
+            cmd_new = [cmd1 + c + cmd3 for c in split_list(cmd2, 500)]
+            return cmd_new
         else:
-            resp.append([cmd])
+            return [cmd]
+
+    def split_list(lst, n):
+        return [lst[i : i + n] for i in range(0, len(lst), n)]
+
+    resp = [split_logic_chain(cmd) for cmd in script]
     return [r for r in resp if r]
 
 
@@ -434,17 +419,17 @@ def rm_all(tab: str, symbol: str, db_file: str) -> Union[None, Dict[str, pd.Data
     # check if tab exists!
     if not tab_exists(tab):
         return
-    hash = getL(
-        tab=tab + "_DESC",
+    hashes = getL(
+        tab=f"{tab}_DESC",
         get=["hash"],
         search=[symbol],
         where=["symbol"],
         db_file=db_file,
     )[0]
 
-    cmd = [f"DELETE FROM {tab} WHERE hash='{hash}'"]
-    cmd += [f"DELETE FROM COMPONENTS WHERE stock_hash='{hash}'"]
-    cmd += [f"DELETE FROM {tab}_DESC WHERE hash='{hash}'"]
+    cmd = [f"DELETE FROM {tab} WHERE hash='{hashes}'"]
+    cmd += [f"DELETE FROM COMPONENTS WHERE stock_hash='{hashes}'"]
+    cmd += [f"DELETE FROM {tab}_DESC WHERE hash='{hashes}'"]
 
     return __execute_sql__(cmd, db_file)
 
@@ -524,10 +509,9 @@ def __execute_sql__(script: list, db_file: str) -> Union[None, Dict[str, pd.Data
             cmd = script[script_split.index(cmd_split)]
             for c in cmd_split:
                 cur.execute(c)
-                a = cur.fetchall()
-                if a:
+                if a := cur.fetchall():
                     colnames = [c[0] for c in cur.description]
-                    if cmd in ans.keys():
+                    if cmd in ans:
                         ans[cmd] = pd.concat(
                             [
                                 ans[cmd].fillna(""),

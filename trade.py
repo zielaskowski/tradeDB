@@ -94,7 +94,8 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 
-# convert_currency fail for big data ranges
+# SQL operation failed:
+# unrecognized token: "'BA"
 
 
 # date holes are possible when updating symbols!!!
