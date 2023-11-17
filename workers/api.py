@@ -130,10 +130,8 @@ def __captcha__(page: bs) -> bool:
     # captcha is trigered with bandwith limit or hit limit
     global header
     if all(
-        [
-            page.find(string=txt) is None
-            for txt in ["The data has been hidden", "Dane zostały ukryte"]
-        ]
+        page.find(string=txt) is None
+        for txt in ["The data has been hidden", "Dane zostały ukryte"]
     ):
         return False
 

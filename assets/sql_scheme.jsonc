@@ -87,6 +87,9 @@
     "hash": "TEXT",
     "vol": "INTEGER",
     "val": "INTEGER NOT NULL",
+    "open": "INTEGER",
+    "low": "INTEGER",
+    "high": "INTEGER",
     "date": "DATE NOT NULL",
     "FOREIGN": [{ "hash": "STOCK_DESC(hash)" }],
     "UNIQUE": ["hash","date"]

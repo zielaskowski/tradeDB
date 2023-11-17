@@ -3,6 +3,10 @@
 from tradeDB import Trader
 
 
+trade=Trader()
+trade.get(tab='STOCK',components='wig20')
+ind = trade.to_str('symbol')
+trade.get(tab='STOCK',symbol=ind)
 
 ale = Trader()
 pkn=Trader()

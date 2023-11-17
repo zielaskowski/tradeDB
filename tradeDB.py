@@ -104,12 +104,11 @@ class Trader:
         if self is trader:
             print("Cannot add Trader instance to itself")
             return self
-        # align dates and currency
+        # align currency
+        trader.kwargs["currency"] = self.__join__(getattr(self, "currency"))
         # make sure dates will be updated
-        align_args = ["currency", "update_dates"]
-        for arg in align_args:
-            trader.kwargs[arg] = self.__join__(getattr(self, arg))
-        # dates must be injected, other way bix_date will shit it
+        trader.kwargs["update_dates"] = True
+        # dates must be injected, other way biz_date will shift it
         trader.start_date = self.start_date
         trader.end_date = self.end_date
         trader.get()
@@ -142,44 +141,44 @@ class Trader:
                 if v["description"]["region"] in self.region
             }
 
-            for key, region in sector_dat.items():  # type: ignore
-                print(f"...downloading indexes for {key}")
-                dat = api.stooq(
-                    sector_id=region["api"]["id"],  # type: ignore
-                    sector_grp=region["api"]["group"],  # type: ignore
-                    from_date=self.start_date,
-                    to_date=self.end_date,
-                )
-                dat = self.__describe_table__(
-                    dat=dat,
-                    tab="INDEXES",
-                    description=region["description"],  # type: ignore
-                )
-                resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
-                if not resp:
-                    sys.exit(f"FATAL: wrong data for {region}")
+        for key, region in sector_dat.items():  # type: ignore
+            print(f"...downloading indexes for {key}")
+            dat = api.stooq(
+                sector_id=region["api"]["id"],  # type: ignore
+                sector_grp=region["api"]["group"],  # type: ignore
+                from_date=self.start_date,
+                to_date=self.end_date,
+            )
+            dat = self.__describe_table__(
+                dat=dat,
+                tab="INDEXES",
+                description=region["description"],  # type: ignore
+            )
+            resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
+            if not resp:
+                sys.exit(f"FATAL: wrong data for {region}")
 
-                with alive_bar(len(dat.index)) as bar:
-                    for row in dat.itertuples(index=False):
-                        datComp = api.stooq(
-                            component=row.symbol,
-                            from_date=self.start_date,
-                            to_date=self.end_date,
-                        )
-                        if datComp.empty:
-                            # no components for index
-                            continue
-                        datComp = self.__describe_table__(
-                            dat=datComp,
-                            tab="STOCK",
-                            description={"indexes": row.symbol, "country": row.country},
-                        )
-                        resp = sql.put(
-                            dat=datComp, tab="STOCK", db_file=self.db, index=row.symbol
-                        )
-                        if not resp:
-                            sys.exit(f"FATAL: wrong data for {row.symbol}")
-                        bar()
+            with alive_bar(len(dat.index)) as bar:
+                for row in dat.itertuples(index=False):
+                    datComp = api.stooq(
+                        component=row.symbol,
+                        from_date=self.start_date,
+                        to_date=self.end_date,
+                    )
+                    if datComp.empty:
+                        # no components for index
+                        continue
+                    datComp = self.__describe_table__(
+                        dat=datComp,
+                        tab="STOCK",
+                        description={"indexes": row.symbol, "country": row.country},
+                    )
+                    resp = sql.put(
+                        dat=datComp, tab="STOCK", db_file=self.db, index=row.symbol
+                    )
+                    if not resp:
+                        sys.exit(f"FATAL: wrong data for {row.symbol}")
+                    bar()
 
     def __read_sectors__(self, address: Dict) -> Dict:
         try:
@@ -534,6 +533,27 @@ class Trader:
         self.__update_currency__()
         self.convert_currency()
         return self
+
+    def to_str(self, col_name: str) -> Union[None, str]:
+        """return column as string with ';' as separator"""
+        if self.data.empty:
+            return
+        try:
+            return ";".join(self.data[col_name].drop_duplicates().astype(str))
+        except KeyError:
+            print(f"Unknown column name. Use: {self.data.columns}")
+            return
+
+    def to_dict(self, **kwargs) -> Union[None, Dict]:
+        """wrapper around pandas.DataFrame.to_dict function
+        Uses orient='list' by default and limits to selected columns.
+        Can forward to to_dict function with custom arguments.
+        """
+        if self.data.empty:
+            return
+        kwargs.setdefault("orient", "list")  # Set default orient if not provided
+        dat = self.data.reindex(columns=self.columns).drop_duplicates()
+        return dat.to_dict(**kwargs)
 
     def plot(self, normalize=True):
         if self.data.empty:
