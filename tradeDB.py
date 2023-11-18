@@ -622,10 +622,12 @@ class Trader:
             on=["date", "cur_from"],
             how="left",
         )
-
-        self.data["val"] = (
-            self.data["val"] / self.data["val_from"] * self.data["val_to"]
-        )
+        for col in ["val", "low", "high", "open"]:
+            self.data[col] = (
+                pd.to_numeric(self.data[col], errors="coerce")
+                / self.data["val_from"]
+                * self.data["val_to"]
+            )
         self.data = self.data.reindex(columns=cols)
         return
 
@@ -670,7 +672,7 @@ class Trader:
         # compare avialable date range with requested dates
         # requested dates can come from 'self_date' or 'self_data'
         # leave only symbols that needs update
-        if date_source == "self_data" and self.data.empty:
+        if date_source == "self_data" and not self.data.empty:
             start_date = self.data["date"].min()
             end_date = self.data["date"].max()
         else:

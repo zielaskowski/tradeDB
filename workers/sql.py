@@ -230,7 +230,7 @@ def put(dat: pd.DataFrame, tab: str, db_file: str, index="") -> Union[Dict, None
     known = query(
         db_file=db_file,
         tab=tab,
-        symbol=dat.loc[:,"symbol"].to_list(),
+        symbol=dat.loc[:, "symbol"].to_list(),
         from_date=date(1900, 1, 1),
         to_date=date.today(),
     )
@@ -301,7 +301,7 @@ def getDF(**kwargs) -> pd.DataFrame:
     returns dataframe, in contrast to Dict[col:pd.DataFrame]
     """
     resp = get(**kwargs)
-    return list(resp.values())[0] if resp else  pd.DataFrame()
+    return list(resp.values())[0] if resp else pd.DataFrame()
 
 
 def getL(**kwargs) -> List:
@@ -374,8 +374,8 @@ def __split_cmd__(script: list) -> List[List]:
         where_index = cmd.find("WHERE")
         if where_index == -1:
             return [cmd]
-        cmd1 = cmd[:where_index+5]
-        cmd2 = cmd[where_index+5:]
+        cmd1 = cmd[: where_index + 5]
+        cmd2 = cmd[where_index + 5 :]
         cmd3 = cmd2[cmd2.find(")") + 1 :]
         cmd2 = cmd2[: cmd2.find(")") + 1]
         logic_tree = cmd2.replace("'", "stock_name")
@@ -389,8 +389,14 @@ def __split_cmd__(script: list) -> List[List]:
         else:
             return [cmd]
 
-    def split_list(lst, n):
-        return [lst[i : i + n] for i in range(0, len(lst), n)]
+    def split_list(cmd: str, n) -> list:
+        lst = cmd.split(" OR ")
+        res = [" OR ".join(lst[i : i + n]) for i in range(0, len(lst), n)]
+        res = [r.strip() for r in res]
+        # remove first and last parenthesis in string if exists
+        res = [r[1:] if r[0] == "(" else r for r in res]
+        res = [r[:-2] if r[-1] == ")" else r for r in res]
+        return [f" ( {r} ) " for r in res]
 
     resp = [split_logic_chain(cmd) for cmd in script]
     return [r for r in resp if r]

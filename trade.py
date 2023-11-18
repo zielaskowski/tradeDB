@@ -98,8 +98,7 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 
-# SQL operation failed:
-# unrecognized token: "'BA"
+# speed up currency_rate(). Now it iterates each row with separate command
 
 
 # date holes are possible when updating symbols!!!
