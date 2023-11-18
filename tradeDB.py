@@ -2,7 +2,7 @@ import os
 import re
 import sys
 import itertools
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable, List, Tuple, Union, Dict, Self
 
 import pandas as pd
@@ -824,7 +824,12 @@ class Trader:
 
         dat["from_date"] = minmax(min, dat)
         dat["to_date"] = minmax(max, dat)
-
+        # if start_date is smaller then ticker trade start, set 1900-1-1
+        # this will prevent scraping of non existing data
+        trade_start = [
+            d - timedelta(days=30) > self.start_date for d in dat["from_date"]
+        ]
+        dat.loc[trade_start, "from_date"] = date(year=1900, month=1, day=1)
         # get industry
         ######
         # ....

@@ -184,15 +184,17 @@ def currency_rate(db_file: str, dat: pd.DataFrame) -> pd.DataFrame:
     """
     Return currency rate for cur_symbol | date
     """
-    dat = dat.drop_duplicates(ignore_index=True)
+    min_date = dat.date.min()
+    max_date = dat.date.max()
     cmd = [
         f"""SELECT c.val, c.date, cd.symbol
             FROM CURRENCY c
             INNER JOIN CURRENCY_DESC cd ON c.hash=cd.hash
                 WHERE
-            (cd.symbol LIKE '{row.symbol}' AND strftime('%s',c.date)=strftime('%s','{row.date}') )
+            (cd.symbol LIKE '{symbol}' AND strftime('%s',c.date) BETWEEN
+                    strftime('%s','{min_date}') AND strftime('%s','{max_date}') )
             """
-        for row in dat.itertuples(index=False)
+        for symbol in dat['symbol'].drop_duplicates()
     ]
     resp = __execute_sql__(cmd, db_file=db_file)
     if resp is None or resp[cmd[0]].empty:

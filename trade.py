@@ -5,11 +5,14 @@ from tradeDB import Trader
 
 ale = Trader()
 ale.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
+ale.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
+
 
 trade=Trader()
 trade.get(tab='STOCK',components='wig20')
 ind = trade.to_str('symbol')
-trade.get(tab='STOCK',symbol=ind)
+trade.get(tab='STOCK',symbol=ind, start_date='1-01-2010')
+trade.get(tab='STOCK',symbol=ind, start_date='1-01-2010')
 
 ale = Trader()
 pkn=Trader()
