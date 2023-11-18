@@ -152,7 +152,7 @@ def stock_index(db_file: str, search: List) -> Union[pd.DataFrame, None]:
         """
         + "("
     )
-    cmd += "".join(["s.symbol LIKE '" + s + "' OR " for s in search])
+    cmd += "".join(["s.symbol LIKE '" + s + "' OR " for s in set(search)])
     cmd += "s.symbol LIKE 'none' "  # just to finish last OR
     cmd += ")"
     resp = __execute_sql__([cmd], db_file=db_file)

@@ -9,7 +9,7 @@ import pandas as pd
 from sklearn import preprocessing as prep
 import matplotlib
 
-matplotlib.use("Agg")  # necessery for debuging in VS code (not-interactive mode)
+# matplotlib.use("Agg")  # necessery for debuging in VS code (not-interactive mode)
 from matplotlib import pyplot as plt
 from alive_progress import alive_bar
 
@@ -71,7 +71,6 @@ class Trader:
         self.__set_dates__({"today": True})
         self.data = pd.DataFrame()
         self.kwargs = {}  # store last arguments
-        self.is_pivot = False  # printing will not reindex columns when table pivoted
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -555,39 +554,35 @@ class Trader:
         dat = self.data.reindex(columns=self.columns).drop_duplicates()
         return dat.to_dict(**kwargs)
 
-    def plot(self, normalize=True):
+    def plot(self, normalize=True) -> None:
         if self.data.empty:
             return
-        if not self.is_pivot:
-            self.pivot()
-        data_np = self.data.to_numpy()
+        dat = self.pivot()
+        dat_np = dat.to_numpy()
         if normalize:
-            data_np = prep.StandardScaler().fit_transform(data_np)
-        for i in range(len(data_np[0])):
-            plt.plot(data_np[:, i], label=self.data.columns[i])
+            dat_np = prep.StandardScaler().fit_transform(dat_np)
+        for i in range(len(dat_np[0])):
+            plt.plot(dat_np[:, i], label=dat.columns[i])
         plt.legend()
         plt.show()
 
-    def pivot(self, **kwargs) -> Union[None, pd.DataFrame]:
+    def pivot(self, **kwargs) -> pd.DataFrame:
         """wrapper around pandas.DataFrame.pivot_table function
         if no args given, will use column 'name' or 'symbol' for new columns
         and column 'val' as values
         Other way will forward to pivot_table function
         """
-        if self.data.empty or self.is_pivot:
-            return
-        self.is_pivot = True
+        if self.data.empty:
+            return self.data
         self.data.reset_index(drop=True, inplace=True)
         if not kwargs:
             if not all(True for c in self.data.columns if c in ["date", "val"]):
-                return
+                return self.data
             names_from = "name" if "name" in self.data.columns else "symbol"
-            self.data = self.data.pivot_table(
-                columns=names_from, values="val", index="date"
-            )
+            dat = self.data.pivot_table(columns=names_from, values="val", index="date")
         else:
-            self.data = self.data.pivot_table(**kwargs)
-        return self.data
+            dat = self.data.pivot_table(**kwargs)
+        return dat
 
     def convert_currency(self) -> None:
         if self.currency == "%" or self.data.empty:
@@ -622,12 +617,15 @@ class Trader:
             on=["date", "cur_from"],
             how="left",
         )
+
         for col in ["val", "low", "high", "open", "vol"]:
-            self.data[col] = (
-                pd.to_numeric(self.data[col], errors="coerce")
-                / self.data["val_from"]
-                * self.data["val_to"]
-            )
+            if col in cols:
+                self.data[col] = (
+                    pd.to_numeric(self.data[col], errors="coerce")
+                    / self.data["val_from"]
+                    * self.data["val_to"]
+                )
+
         self.data = self.data.reindex(columns=cols)
         return
 
@@ -757,7 +755,7 @@ class Trader:
             with alive_bar(len(curDF)) as bar:
                 for row in curDF.itertuples(index=False):
                     if info:
-                        print("...updating curremcy")
+                        print("...updating currency")
                         info = False
                     cur_val = api.ecb(
                         from_date=row.from_date, end_date=row.to_date, symbol=row.symbol

@@ -3,32 +3,38 @@
 from tradeDB import Trader
 
 
-ale = Trader()
-ale.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
-ale.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
+spx = Trader()
+spx.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
+spx.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
+ale=Trader()
+ale.get(tab='STOCK', name='ALLEGRO')
+spx+=ale
+print(spx)
+ale+=spx
+print(ale)
 
 
 trade=Trader()
 trade.get(tab='STOCK',components='wig20')
 ind = trade.to_str('symbol')
 trade.get(tab='STOCK',symbol=ind, start_date='1-01-2010')
-trade.get(tab='STOCK',symbol=ind, start_date='1-01-2010')
+trade.get(tab='STOCK',symbol=ind, start_date='1-01-2010',currency='USD')
+trade+=spx
+print(trade)
 
 ale = Trader()
 pkn=Trader()
 ale.get(tab="STOCK", name="ALLEGRO", start_date="01-05-2023", currency="USD")
 pkn.get(tab="STOCK", symbol="PKN")
 print(pkn)
-ale+pkn
-ale.plot()
+ale+=pkn
 print(ale)
 
 ale = Trader()
 pkn=Trader()
 ale.get(tab="STOCK", name="ALLEGRO", start_date="01-05-2023", currency="USD")
 pkn.get(tab="STOCK", country='pl')
-ale+pkn
-ale.plot()
+ale+=pkn
 print(ale)
 
 
@@ -104,7 +110,15 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 
-# speed up currency_rate(). Now it iterates each row with separate command
+# add TA-lib
+# ta: indicator name as str + other kwargs
+# group by symbol self.data, for each group take OHLCV and call talib
+# add column to self.data with symbol and TA as suffix
+# store TA in class, so can be restored after change dates i.e.
+####
+# pivot table including TA....
+# if no other way, pivot_longer moving indicator to symbol and name and values to val
+
 
 # date holes are possible when updating symbols!!!
 # check requested dates also between max and min date!
