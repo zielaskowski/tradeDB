@@ -105,13 +105,14 @@ def convert_date(dates: pd.Series) -> pd.Series:
     dates = dates.apply(lambda x: x if not pd.isna(x) else "1 Sty 1900")
     dates = dates.apply(lambda x: x if re.search(r"[0-9]", x) else "1 Sty 1900")
 
-    d1 = date_locale(today + " " + dates, "en_GB.utf8", "%d %b %Y %H:%M")  # hh:ss
-    d2 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 24 Feb
-    d3 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %b %d")  # Jan 22
-    d4 = date_locale(year + " " + dates, "en_GB.utf8", "%Y %d %b")  # 25 Jan
-    d5 = date_locale(dates, "en_GB.utf8", "%d %b %Y")  # 25 Jan 2023
-    d6 = date_locale(year + " " + dates, "pl_PL.utf8", "%Y %d %b")  # 22 Lut
-    d7 = date_locale(dates, "pl_PL.utf8", "%d %b %Y")  # 22 Lut 2023
+    d1 = date_locale(today + " " + dates, "en_GB.utf8", r"%d %b %Y %H:%M")  # hh:ss
+    d2 = date_locale(year + " " + dates, "en_GB.utf8", r"%Y %d %b")  # 24 Feb
+    d3 = date_locale(year + " " + dates, "en_GB.utf8", r"%Y %b %d")  # Jan 22
+    d4 = date_locale(year + " " + dates, "en_GB.utf8", r"%Y %d %b")  # 25 Jan
+    d5 = date_locale(dates, "en_GB.utf8", r"%d %b %Y")  # 25 Jan 2023
+    d6 = date_locale(year + " " + dates, "pl_PL.utf8", r"%Y %d %b")  # 22 Lut
+    d7 = date_locale(dates, "pl_PL.utf8", r"%d %b %Y")  # 22 Lut 2023
+    d8 = date_locale(dates, "pl_PL.utf8", r"%Y-%m-%d")  # 2023-10-20
 
     d1 = d1.fillna(d2)
     d1 = d1.fillna(d3)
@@ -119,6 +120,7 @@ def convert_date(dates: pd.Series) -> pd.Series:
     d1 = d1.fillna(d5)
     d1 = d1.fillna(d6)
     d1 = d1.fillna(d7)
+    d1 = d1.fillna(d8)
     d1 = d1.dt.date
     d1 = d1.fillna(" ")
     # if date not recognized

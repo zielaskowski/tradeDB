@@ -3,6 +3,9 @@
 from tradeDB import Trader
 
 
+ale = Trader()
+ale.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
+
 trade=Trader()
 trade.get(tab='STOCK',components='wig20')
 ind = trade.to_str('symbol')
@@ -99,7 +102,6 @@ print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
 # speed up currency_rate(). Now it iterates each row with separate command
-
 
 # date holes are possible when updating symbols!!!
 # check requested dates also between max and min date!

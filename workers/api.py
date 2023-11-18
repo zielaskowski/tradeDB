@@ -65,10 +65,9 @@ def stooq(
             data = __split_groups__(data, sector_grp)
 
     elif symbol:  # or we search particular item
-        url = (
-            f"https://stooq.com/q/d/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%"
-        )
-        data = __scrap_stooq__(url)
+        url = f"https://stooq.com/q/d/l/?s={symbol}&d1={from_dateS}&d2={to_dateS}&l=%page%&i=d"
+        # i: download data as csv
+        data = __scrap_stooq__(url, n=2)
     elif component:
         url = f"https://stooq.com/q/i/?s={component}&i=0&l=%page%"
         # i: show indicators
@@ -220,10 +219,10 @@ async def __GDPR__(url: str):
         await page.reload()
 
 
-def __scrap_stooq__(url: str) -> pd.DataFrame:
+def __scrap_stooq__(url: str, n=100) -> pd.DataFrame:
     global header
     data = pd.DataFrame()
-    for i in range(1, 100):
+    for i in range(1, n):
         urli = re.sub("%page%", str(i), url).lower()
         while True:
             resp = rq.get(url=urli, headers=header, allow_redirects=False)
@@ -239,6 +238,7 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
                 file=STOOQ_HEADER,
                 upd_header={"cookie": resp.headers.get("set-cookie", "")},
             )
+
             page = bs(resp.content, "lxml")
 
             if page.body is None:
@@ -253,48 +253,54 @@ def __scrap_stooq__(url: str) -> pd.DataFrame:
                 continue
             break
 
-        htmlTab = page.find(id="fth1")
-        if htmlTab is None:
-            break
-
-        pdTab = pd.read_html(io.StringIO(bs.prettify(htmlTab)))[0]  # type: ignore
+        if "/q/d/l/" in urli:
+            pdTab = pd.read_csv(io.StringIO(page.body.p.text))  # type: ignore
+        else:
+            htmlTab = page.find(id="fth1")
+            if htmlTab is None:
+                break
+            pdTab = pd.read_html(io.StringIO(bs.prettify(htmlTab)))[0]  # type: ignore
 
         if pdTab.empty:
             break
 
-        if pdTab.columns.nlevels > 1:
-            pdTab = pdTab.droplevel(0, axis="columns")
-
-        # some basic formatting:
-        # str_to_lower
-        pdTab.rename(str.lower, axis="columns", inplace=True)
-        # info about dyvident (also others?) breaks table
-        if "no." in pdTab.columns:
-            pdTab = pdTab.dropna(subset="no.")
-        # rename columns
-        pdTab.rename(
-            columns={
-                "nazwa": "name",
-                "kurs": "val",
-                "data": "date",
-                "wolumen": "vol",
-                "zamknięcie": "val",
-                "last": "val",
-                "close": "val",
-                "volume": "vol",
-            },
-            inplace=True,
-        )
-        # drop duplicated columns
-        # i.e. change is in percent and in absolute value
-        pdTab = pdTab.loc[:, list(~pdTab.columns.duplicated())]
-        # drop rows without value
-        pdTab = pdTab.dropna(subset=["val"])
-        # convert dates
-        pdTab["date"] = convert_date(pdTab["date"])
-
         data = pd.concat([data, pdTab], ignore_index=True)
-    return data
+    return __clean_tab__(data)
+
+
+def __clean_tab__(pdTab: pd.DataFrame) -> pd.DataFrame:
+    # some basic formatting:
+    if pdTab.empty:
+        return pdTab
+    if pdTab.columns.nlevels > 1:
+        pdTab = pdTab.droplevel(0, axis="columns")
+    # str_to_lower
+    pdTab.rename(str.lower, axis="columns", inplace=True)
+    # info about dyvident (also others?) breaks table
+    if "no." in pdTab.columns:
+        pdTab = pdTab.dropna(subset="no.")
+    # rename columns
+    pdTab.rename(
+        columns={
+            "nazwa": "name",
+            "kurs": "val",
+            "data": "date",
+            "wolumen": "vol",
+            "zamknięcie": "val",
+            "last": "val",
+            "close": "val",
+            "volume": "vol",
+        },
+        inplace=True,
+    )
+    # drop duplicated columns
+    # i.e. change is in percent and in absolute value
+    pdTab = pdTab.loc[:, list(~pdTab.columns.duplicated())]
+    # drop rows without value
+    pdTab = pdTab.dropna(subset=["val"])
+    # convert dates
+    pdTab["date"] = convert_date(pdTab["date"])
+    return pdTab
 
 
 def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:

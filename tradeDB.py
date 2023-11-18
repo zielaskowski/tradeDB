@@ -622,7 +622,7 @@ class Trader:
             on=["date", "cur_from"],
             how="left",
         )
-        for col in ["val", "low", "high", "open"]:
+        for col in ["val", "low", "high", "open", "vol"]:
             self.data[col] = (
                 pd.to_numeric(self.data[col], errors="coerce")
                 / self.data["val_from"]
