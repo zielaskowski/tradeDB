@@ -660,15 +660,89 @@ class Trader:
         self.candle_pattern_kwargs = {"date_period": date_period}
         self.data["date"] = pd.to_datetime(self.data["date"])
         candle_pattern = {
-            "bearish_engulfing": -1,
-            "dark_cloud": -1,
-            "bearish_star": -1,
-            "bearish_island": -1,
-            "bearish_tasuki_gap": -1,
-            "bullish_engulfing": +1,
-            "bullish_island": 1,
-            "bullish_star": 1,
-            "bullish_tasuki_gap": 1,
+            "bearish_engulfing": {
+                "ind": -1,
+                "kwargs": {"trend_lookback": 30, "trend_threshold": 0.03},
+            },
+            "dark_cloud": {
+                "ind": -1,
+                "kwargs": {
+                    "trend_lookback": 30,
+                    "trend_threshold": 0.03,
+                    "min_body_size": 0.7,
+                    "new_high_periods": 30,
+                },
+            },
+            "bearish_star": {
+                "ind": -1,
+                "kwargs": {
+                    "lookback": 30,
+                    "min_body_size": 0.7,
+                    "relative_threshold": 0.3,
+                    "min_gap_size": 0.001,
+                },
+            },
+            "bearish_island": {
+                "ind": -1,
+                "kwargs": {"min_gap_size": 0.001, "lookback": 30},
+            },
+            "bearish_tasuki_gap": {
+                "ind": -1,
+                "kwargs": {
+                    "trend_lookback": 30,
+                    "trend_threshold": -0.03,
+                    "min_body_size": 0.75,
+                    "min_gap_size": 0.002,
+                },
+            },
+            "bullish_engulfing": {
+                "ind": +1,
+                "kwargs": {"trend_lookback": 30, "trend_threshold": 0.03},
+            },
+            "bullish_island": {
+                "ind": +1,
+                "kwargs": {"min_gap_size": 0.001, "lookback": 30},
+            },
+            "bullish_star": {
+                "ind": +1,
+                "kwargs": {
+                    "lookback": 30,
+                    "min_body_size": 0.7,
+                    "relative_threshold": 0.3,
+                    "min_gap_size": 0.001,
+                },
+            },
+            "bullish_tasuki_gap": {
+                "ind": 1,
+                "kwargs": {
+                    "trend_lookback": 30,
+                    "trend_threshold": -0.03,
+                    "min_body_size": 0.75,
+                    "min_gap_size": 0.002,
+                },
+            },
+            "n_black_crows": {
+                "ind": -1,
+                "kwargs": {
+                    "n": 5,
+                    "lookback": 20,
+                    "min_body_size": 0.75,
+                    "close_threshold": 0.002,
+                },
+            },
+            "n_white_soldiers": {
+                "ind": +1,
+                "kwargs": {
+                    "n": 5,
+                    "lookback": 20,
+                    "min_body_size": 0.75,
+                    "close_threshold": 0.002,
+                },
+            },
+            "rising_n": {"ind": +1, "kwargs": {"n": 5, "lookback": 20}},
+            "rising_three": {"ind": +1, "kwargs": {"lookback": 20}},
+            "falling_n": {"ind": -1, "kwargs": {"n": 5, "lookback": 20}},
+            "falling_three": {"ind": -1, "kwargs": {"lookback": 20}},
         }
 
         def calc_cp(grp):
@@ -682,14 +756,20 @@ class Trader:
                     low=grp["low"],
                     high=grp["high"],
                     close=grp["val"],
+                    **cv['kwargs']
                 )
-                grp.loc[cp_rows, "candle_pattern"] += cv  # type: ignore
+                grp.loc[cp_rows, "candle_pattern"] += cv['ind']  # type: ignore
             grp["candle_pattern"] = grp["candle_pattern"].cumsum()
             grp["symbol"] = symbol
             return grp
 
         self.data.sort_values(by=["symbol", "date"], inplace=True)
-        cp_DF = self.data.groupby("symbol", group_keys=False).apply(calc_cp)
+        cp_DF = (
+            self.data.reindex(columns=req_cols)
+            .drop_duplicates()
+            .groupby("symbol", group_keys=False)
+            .apply(calc_cp)
+        )
         # both DFs must be sorted before merge_asof
         self.data.sort_values(by=["date"], inplace=True)
         cp_DF.sort_values(by=["date"], inplace=True)
@@ -723,6 +803,7 @@ class Trader:
             dat = dat.pivot_table(columns="symbol", values="val", index="date")
         else:
             dat = self.data.pivot_table(**kwargs)
+        dat.index = pd.to_datetime(dat.index)
         return dat
 
     def __pivot_longer__(self, dat: pd.DataFrame) -> pd.DataFrame:
@@ -731,9 +812,9 @@ class Trader:
         def process_column(df, col_name, suffix):
             new_col = df["symbol"] + suffix
             df["new_col"] = new_col
-            df_cp = df.loc[:, ["date", col_name, 'new_col']]
-            df_cp.rename(columns={col_name: "val", 'new_col': "symbol"}, inplace=True)
-            df.drop(columns=[col_name, 'new_col'], inplace=True)
+            df_cp = df.loc[:, ["date", col_name, "new_col"]]
+            df_cp.rename(columns={col_name: "val", "new_col": "symbol"}, inplace=True)
+            df.drop(columns=[col_name, "new_col"], inplace=True)
             return pd.concat([df, df_cp])
 
         for col_name, suffix in {"candle_pattern": "_cp", "vol": "_vol"}.items():
