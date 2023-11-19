@@ -7,12 +7,12 @@ from typing import Callable, List, Tuple, Union, Dict, Self
 
 import pandas as pd
 from sklearn import preprocessing as prep
-import matplotlib
 
-# matplotlib.use("Agg")  # necessery for debuging in VS code (not-interactive mode)
+# import matplotlib
+# matplotlib.use("Agg")  # necessery for debuging plot in VS code (not-interactive mode)
 from matplotlib import pyplot as plt
 from alive_progress import alive_bar
-
+from technical_analysis import candles
 
 from workers import api, sql
 from workers.common import read_json, biz_date, hash_table
@@ -44,6 +44,7 @@ class Trader:
         - + - can add data from different queries
         - pivot - 'excell' like table
         - plot - quick plots
+        - candle_apatterns - calculate bullish/bearish trend based on candles
     """
 
     def __init__(self, db="", update_symbols=True) -> None:
@@ -71,6 +72,7 @@ class Trader:
         self.__set_dates__({"today": True})
         self.data = pd.DataFrame()
         self.kwargs = {}  # store last arguments
+        self.candle_pattern_kwargs = {}  # store cp arguments
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -105,6 +107,8 @@ class Trader:
             return self
         # align currency
         trader.kwargs["currency"] = self.__join__(getattr(self, "currency"))
+        # align technical analysis
+        trader.candle_pattern_kwargs = self.candle_pattern_kwargs
         # make sure dates will be updated
         trader.kwargs["update_dates"] = True
         # dates must be injected, other way biz_date will shift it
@@ -275,6 +279,7 @@ class Trader:
             [setattr(self, a, v) for a, v in self.args.items()]
             self.date_change_print = False
             self.__set_dates__({"today": True})
+            self.candle_pattern_kwargs = {}
         return args_checked
 
     def __arg_tab__(self, arg: str) -> None:
@@ -531,6 +536,8 @@ class Trader:
 
         self.__update_currency__()
         self.convert_currency()
+        if self.candle_pattern_kwargs:
+            self.candle_pattern(**self.candle_pattern_kwargs)
         return self
 
     def to_str(self, col_name: str) -> Union[None, str]:
@@ -558,31 +565,147 @@ class Trader:
         if self.data.empty:
             return
         dat = self.pivot()
+
+        fig, axs = plt.subplots(2, 1, sharex=True)
+        fig.subplots_adjust(hspace=0.5)
+
+        # create new dataframe from columns with suffix '_cp' in dat dataframe
+        cp_cols = [col for col in dat.columns if "_cp" in col]
+        if cp_cols:
+            dat_cp = dat.loc[:, cp_cols]
+            dat.drop(columns=cp_cols, inplace=True)
+            dat_cp_np = dat_cp.to_numpy()
+            for i in range(len(dat_cp_np[0])):
+                axs[1].plot(dat_cp_np[:, i], label=dat_cp.columns[i])
+
         dat_np = dat.to_numpy()
         if normalize:
             dat_np = prep.StandardScaler().fit_transform(dat_np)
         for i in range(len(dat_np[0])):
-            plt.plot(dat_np[:, i], label=dat.columns[i])
-        plt.legend()
+            axs[0].plot(dat_np[:, i], label=dat.columns[i])
+
+        fig.legend()
         plt.show()
+
+    def __date_resample__(self, df: pd.DataFrame, date_period: str) -> pd.DataFrame:
+        """recalculate OLHCV data to new period
+        assume input data is daily
+        can translate to weekly and monthly
+        """
+        periods = {"daily": "D", "weekly": "W", "monthly": "M"}
+        if date_period.lower() in periods.keys():
+            date_period = periods[date_period.lower()]
+
+        resample_agg = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "val": "last",
+            "vol": "sum",
+        }
+
+        df = df.resample(rule=date_period, on="date").agg(resample_agg)  # type: ignore
+        df.reset_index(inplace=True)
+
+        return df
+
+    def candle_pattern(self, date_period="daily") -> pd.DataFrame:
+        """recognize cnadle pattern and add column with prediction:
+        - bullish are positive number (the higher value the more bullish)
+        - bearisch is negative (the lower value the more bearish)
+        dates must be arranged ascending (from older to newer)
+        using technical-analysis library
+        https://github.com/trevormcguire/technical-analysis
+        """
+        if self.data.empty:
+            return self.data
+        req_cols = ["open", "high", "low", "val", "vol", "symbol", "date"]
+        if not all([c in self.data.columns for c in req_cols]):
+            print("candle pattern requires open, high, low, close, volume")
+            return self.data
+        if 'candle_pattern' in self.data.columns:
+            self.data.drop(columns=['candle_pattern'], inplace=True)
+        self.candle_pattern_kwargs = {"date_period": date_period}
+        self.data["date"] = pd.to_datetime(self.data["date"])
+        candle_pattern = {
+            "bearish_engulfing": -1,
+            "dark_cloud": -1,
+            "bearish_star": -1,
+            "bearish_island": -1,
+            "bearish_tasuki_gap": -1,
+            "bullish_engulfing": +1,
+            "bullish_island": 1,
+            "bullish_star": 1,
+            "bullish_tasuki_gap": 1,
+        }
+
+        def calc_cp(grp):
+            symbol = grp.iloc[0]["symbol"]
+            grp = self.__date_resample__(grp, date_period)
+            grp["candle_pattern"] = 0
+            for cp, cv in candle_pattern.items():
+                ta_func = getattr(candles, cp)
+                cp_rows = ta_func(
+                    open=grp["open"],
+                    low=grp["low"],
+                    high=grp["high"],
+                    close=grp["val"],
+                )
+                grp.loc[cp_rows, "candle_pattern"] += cv  # type: ignore
+            grp["candle_pattern"] = grp["candle_pattern"].cumsum()
+            grp["symbol"] = symbol
+            return grp
+
+        self.data.sort_values(by=["symbol", "date"], inplace=True)
+        cp_DF = self.data.groupby("symbol", group_keys=False).apply(calc_cp)
+        # both DFs must be sorted before merge_asof
+        self.data.sort_values(by=["date"], inplace=True)
+        cp_DF.sort_values(by=["date"], inplace=True)
+        self.data = pd.merge_asof(
+            left=self.data,
+            right=cp_DF.reindex(columns=["symbol", "date", "candle_pattern"]),
+            on="date",
+            by="symbol",
+        )
+        self.data.sort_values(by=["symbol", "date"], inplace=True, ignore_index=True)
+        return self.data
 
     def pivot(self, **kwargs) -> pd.DataFrame:
         """wrapper around pandas.DataFrame.pivot_table function
-        if no args given, will use column 'name' or 'symbol' for new columns
-        and column 'val' as values
+        if no args given, will use column 'symbol' for new columns
+        and column 'val' as values.
+        also handles if technical analysis column exists (see pivot_longer())
         Other way will forward to pivot_table function
         """
         if self.data.empty:
             return self.data
+
         self.data.reset_index(drop=True, inplace=True)
         if not kwargs:
-            if not all(True for c in self.data.columns if c in ["date", "val"]):
+            if not all(
+                True for c in self.data.columns if c in ["date", "val", "symbol"]
+            ):
+                print('One of columns: "[date, val, symbol]" not found in dataframe')
                 return self.data
-            names_from = "name" if "name" in self.data.columns else "symbol"
-            dat = self.data.pivot_table(columns=names_from, values="val", index="date")
+            dat = self.__pivot_longer__(self.data.copy())
+            dat = dat.pivot_table(columns="symbol", values="val", index="date")
         else:
             dat = self.data.pivot_table(**kwargs)
         return dat
+
+    def __pivot_longer__(self, dat: pd.DataFrame) -> pd.DataFrame:
+        """move selected columns to bottom of DataFrame, so pivot_table works"""
+        if "candle_pattern" in dat.columns:
+            dat["cp_col"] = dat["symbol"] + "_cp"
+            # move cp_col, date, and candle_pattern cols to new dataframe
+            dat_cp = dat.loc[:, ["date", "candle_pattern", "cp_col"]]
+            dat_cp.rename(
+                columns={"candle_pattern": "val", "cp_col": "symbol"}, inplace=True
+            )
+            # remove cp_col and candle_pattern cols
+            dat.drop(columns=["candle_pattern", "cp_col"], inplace=True)
+            dat = pd.concat([dat, dat_cp])
+        return dat.reset_index(drop=True)
 
     def convert_currency(self) -> None:
         if self.currency == "%" or self.data.empty:

@@ -3,6 +3,15 @@
 from tradeDB import Trader
 
 
+pkn=Trader()
+ale=Trader()
+pkn.get(tab='stock',symbol='pkn', start_date='1-1-2020')
+ale.get(tab='stock',symbol='ale')
+pkn+=ale
+pkn.candle_pattern('M')
+pkn.pivot()
+pkn.plot()
+
 spx = Trader()
 spx.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
 spx.get(tab='indexes', symbol='^spx', start_date='1-01-2015')
