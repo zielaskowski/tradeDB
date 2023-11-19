@@ -565,25 +565,57 @@ class Trader:
         if self.data.empty:
             return
         dat = self.pivot()
-
-        fig, axs = plt.subplots(2, 1, sharex=True)
+        axes = [0, 1, 2]
+        fig, axs = plt.subplots(len(axes), 1, sharex=True)
         fig.subplots_adjust(hspace=0.5)
 
-        # create new dataframe from columns with suffix '_cp' in dat dataframe
+        def plot_cols(cols, ax_n):
+            nonlocal axs, dat
+            dat_cols = dat.loc[:, cols]
+            dat.drop(columns=cols, inplace=True)
+            dat_cols_np = dat_cols.to_numpy()
+            for i in range(len(dat_cols_np[0])):
+                axs[ax_n].plot(dat_cols_np[:, i], label=dat_cols.columns[i])
+
+        # candle pattern plot
         cp_cols = [col for col in dat.columns if "_cp" in col]
         if cp_cols:
-            dat_cp = dat.loc[:, cp_cols]
-            dat.drop(columns=cp_cols, inplace=True)
-            dat_cp_np = dat_cp.to_numpy()
-            for i in range(len(dat_cp_np[0])):
-                axs[1].plot(dat_cp_np[:, i], label=dat_cp.columns[i])
+            plot_cols(cp_cols, 1)
+            axs[1].set_title("candle pattern")
+        else:
+            fig.delaxes(axs[1])
+            axes.remove(1)
 
+        # volumen plot
+        vol_cols = [col for col in dat.columns if "_vol" in col]
+        if vol_cols:
+            plot_cols(vol_cols, 2)
+            axs[2].set_title("volumen")
+        else:
+            fig.delaxes(axs[2])
+            axes.remove(2)
+
+        # value plot
+        # must be last!
         dat_np = dat.to_numpy()
         if normalize:
             dat_np = prep.StandardScaler().fit_transform(dat_np)
+        axs[0].set_title("ticker value")
         for i in range(len(dat_np[0])):
             axs[0].plot(dat_np[:, i], label=dat.columns[i])
+        # in matplotlib, fill figure with remained axes after delete of one of axes
 
+        for a in axes:
+            lax = len(axes)
+            i = axes.index(a)
+            axs[a].set_position(
+                [
+                    axs[a].get_position().x0,
+                    (lax - i - 1) * (1 / lax) + (0.1 / lax),
+                    axs[a].get_position().width,
+                    0.6 / lax,
+                ]
+            )
         fig.legend()
         plt.show()
 
@@ -623,8 +655,8 @@ class Trader:
         if not all([c in self.data.columns for c in req_cols]):
             print("candle pattern requires open, high, low, close, volume")
             return self.data
-        if 'candle_pattern' in self.data.columns:
-            self.data.drop(columns=['candle_pattern'], inplace=True)
+        if "candle_pattern" in self.data.columns:
+            self.data.drop(columns=["candle_pattern"], inplace=True)
         self.candle_pattern_kwargs = {"date_period": date_period}
         self.data["date"] = pd.to_datetime(self.data["date"])
         candle_pattern = {
@@ -695,16 +727,18 @@ class Trader:
 
     def __pivot_longer__(self, dat: pd.DataFrame) -> pd.DataFrame:
         """move selected columns to bottom of DataFrame, so pivot_table works"""
-        if "candle_pattern" in dat.columns:
-            dat["cp_col"] = dat["symbol"] + "_cp"
-            # move cp_col, date, and candle_pattern cols to new dataframe
-            dat_cp = dat.loc[:, ["date", "candle_pattern", "cp_col"]]
-            dat_cp.rename(
-                columns={"candle_pattern": "val", "cp_col": "symbol"}, inplace=True
-            )
-            # remove cp_col and candle_pattern cols
-            dat.drop(columns=["candle_pattern", "cp_col"], inplace=True)
-            dat = pd.concat([dat, dat_cp])
+
+        def process_column(df, col_name, suffix):
+            new_col = df["symbol"] + suffix
+            df["new_col"] = new_col
+            df_cp = df.loc[:, ["date", col_name, 'new_col']]
+            df_cp.rename(columns={col_name: "val", 'new_col': "symbol"}, inplace=True)
+            df.drop(columns=[col_name, 'new_col'], inplace=True)
+            return pd.concat([df, df_cp])
+
+        for col_name, suffix in {"candle_pattern": "_cp", "vol": "_vol"}.items():
+            if col_name in dat.columns:
+                dat = process_column(dat, col_name, suffix)
         return dat.reset_index(drop=True)
 
     def convert_currency(self) -> None:
