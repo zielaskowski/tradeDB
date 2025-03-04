@@ -24,6 +24,7 @@
     "country": "TEXT NOT NULL",
     "industry": "TEXT",
     "info": "TEXT",
+    "start_quote": "DATE NOT NULL",
     "from_date": "DATE NOT NULL",
     "to_date": "DATE NOT NULL",
     "FOREIGN": [{ "country": "GEO(iso2)" }]
@@ -43,6 +44,7 @@
     "country": "TEXT",
     "industry": "TEXT",
     "info": "TEXT",
+    "start_quote": "DATE NOT NULL",
     "from_date": "DATE NOT NULL",
     "to_date": "DATE NOT NULL",
     "FOREIGN": [{ "country": "GEO(iso2)" }]
@@ -61,6 +63,7 @@
     "name": "TEXT NOT NULL",
     "sector": "TEXT",
     "info": "TEXT",
+    "start_quote": "DATE NOT NULL",
     "from_date": "DATE NOT NULL",
     "to_date": "DATE NOT NULL"
   },
@@ -79,6 +82,7 @@
     "country": "TEXT",
     "industry": "TEXT",
     "info": "TEXT",
+    "start_quote": "DATE NOT NULL",
     "from_date": "DATE NOT NULL",
     "to_date": "DATE NOT NULL",
     "FOREIGN": [{ "country": "GEO(iso2)" }]

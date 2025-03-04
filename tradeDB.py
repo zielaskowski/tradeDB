@@ -942,6 +942,10 @@ class Trader:
         # adjust from_date or to_date to begining/end existing period
         dat.loc[:, "from_date"] = min(dat["from_date"].to_list() + [start_date])
         dat.loc[:, "to_date"] = max(dat["to_date"].to_list() + [end_date])
+
+        # remove symbols if start date before start_quote
+        if "start_quote" in dat.columns:
+            dat = dat.loc[dat["start_quote"] <= start_date]
         return dat
 
     def __update_dates__(self) -> None:
@@ -1081,7 +1085,14 @@ class Trader:
 
         minmax(min, dat)
         minmax(max, dat)
-
+        # if start_date is smaller then ticker trade start, set start_quote
+        # this will prevent scraping of non existing data
+        dat.loc[:, "start_quote"] = date(1800,1,1)
+        trade_start = [
+            d - timedelta(days=30) > self.start_date 
+            for d in dat["from_date"]
+        ]
+        dat.loc[trade_start, "start_quote"] = dat.loc[trade_start, "from_date"]
         # get industry
         ######
         # ....

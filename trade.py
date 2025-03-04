@@ -3,19 +3,19 @@
 from tradeDB import Trader
 
 
-# pkn = Trader()
-# pkn.get(tab="stock", symbol="ale", columns="-indexes;-industry;-info", start_date="1-1-2020",update_dates=False)
-# pkn.plot()
+pkn = Trader()
+pkn.get(tab="stock", symbol="ale", columns="-indexes;-industry;-info", start_date="1-1-2020",update_dates=False)
+pkn.plot()
 
-# # will take last available from db (not today)
-# ale = Trader()
-# ale.get(tab="stock", name="CITIC", columns="-indexes;-industry;-info", update_dates=False)
-# print(ale)
+# will take last available from db (not today)
+ale = Trader()
+ale.get(tab="stock", name="CITIC", columns="-indexes;-industry;-info", update_dates=False)
+print(ale)
 
-# # nothing available locally
-# ale = Trader()
-# ale.get(tab="stock", name="CITIC", columns="-indexes;-industry;-info", start_date = "1-1-1910",end_date = "1-1-1920",update_dates=False)
-# print(ale)
+# nothing available locally
+ale = Trader()
+ale.get(tab="stock", name="CITIC", columns="-indexes;-industry;-info", start_date = "1-1-1910",end_date = "1-1-1920",update_dates=False)
+print(ale)
 
 
 

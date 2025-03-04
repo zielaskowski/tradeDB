@@ -496,6 +496,7 @@ def check_sql(db_file: str) -> bool:
         if tab_columns(tab, db_file) != scheme_cols:
             print(f"Wrong DB scheme in file '{db_file}'.")
             print(f"Problem with table '{tab}'")
+            print("Remove DB file, and tradeDB will create new one.")
             return False
     return True
 
