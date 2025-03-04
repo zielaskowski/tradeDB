@@ -24,8 +24,8 @@ def query(
     db_file: str,
     tab: str,
     symbol: List[str],
-    from_date: Union[None, date],
-    to_date: Union[None, date],
+    from_date: date,
+    to_date:  date,
 ) -> pd.DataFrame:
     """get data from sql db about symbol,
     including relevant data from description tab
@@ -37,8 +37,8 @@ def query(
         db_file: db file
         tab: table in sql
         symbol: symbol from table:
-        from_date: start date of data (including). if missing take only last date
-        to_date: last date of data (including). If empty string, return only last available
+        from_date: start date of data (including).
+        to_date: last date of data (including).
     """
     if not check_sql(db_file):
         return pd.DataFrame()
@@ -68,13 +68,9 @@ def query(
     cmd += ")"
 
     if tab != "GEO":
-        if to_date and from_date:
-            cmd += f"""AND strftime('%s',date) BETWEEN
-                        strftime('%s','{from_date}') AND strftime('%s','{to_date}')
-                    """
-
-        else:
-            cmd += r"AND strftime('%s',t.date)=strftime('%s',td.to_date)"
+        cmd += f"""AND strftime('%s',date) BETWEEN
+                    strftime('%s','{from_date}') AND strftime('%s','{to_date}')
+                """
     resp = __execute_sql__([cmd], db_file)
     if resp is None or resp[cmd].empty:
         return pd.DataFrame()
@@ -194,7 +190,7 @@ def currency_rate(db_file: str, dat: pd.DataFrame) -> pd.DataFrame:
             (cd.symbol LIKE '{symbol}' AND strftime('%s',c.date) BETWEEN
                     strftime('%s','{min_date}') AND strftime('%s','{max_date}') )
             """
-        for symbol in dat['symbol'].drop_duplicates()
+        for symbol in dat["symbol"].drop_duplicates()
     ]
     resp = __execute_sql__(cmd, db_file=db_file)
     if resp is None or resp[cmd[0]].empty:
@@ -243,11 +239,16 @@ def put(dat: pd.DataFrame, tab: str, db_file: str, index="") -> Union[Dict, None
         dat = dat.reindex(columns=known.columns)  # align columns
         dat = dat.merge(known, how="left", on=["hash", "date"], suffixes=("", "_known"))
         # fill new data with what already known
+        pattern = re.compile("(date)|(val)|(symbol)|(name)|(hash)")
+        # identify relevant columns and fill missing values
         for c in known.columns:
-            if not re.search(
-                "(date)|(val)|(symbol)|(name)|(hash)|(start_date)|(to_date)", c
-            ):
-                dat[c] = dat[c].fillna(dat[c + "_known"])
+            if not pattern.search(c) and f"{c}_known" in dat.columns:
+                dat[c] = (
+                    dat[c]
+                    .infer_objects() # prevent FutureWarning
+                    .fillna(dat[c + "_known"]
+                        .infer_objects()) # prevent FutureWarning
+                )
 
     # add new data to sql
     for t in tabL:
@@ -296,6 +297,21 @@ def __write_table__(
     ]
     return __execute_sql__(cmd, db_file)
 
+def get_start_date(ticker: List, tab: str, db_file: str) -> date:
+    resp = getL(db_file=db_file, 
+               tab=tab, 
+               get=["from_date"],
+               search=ticker,
+               where=["symbol"])
+    return min(resp)
+
+def get_end_date(ticker: List, tab: str, db_file: str) -> date:
+    resp = getL(db_file=db_file, 
+               tab=tab, 
+               get=["to_date"],
+               search=ticker,
+               where=["symbol"])
+    return max(resp)
 
 def getDF(**kwargs) -> pd.DataFrame:
     """wraper around get() when:
@@ -308,7 +324,7 @@ def getDF(**kwargs) -> pd.DataFrame:
 
 def getL(**kwargs) -> List:
     """wraper around get() when:
-    - search in on one col only
+    - search is on one col only
     - get only one column from DataFrame
     returns list, in contrast to Dict[col:pd.DataFrame]
     """
@@ -576,8 +592,8 @@ def create_sql(db_file: str) -> bool:
         tab_cmd = re.sub(",[^,]*$", "", tab_cmd)  # remove last comma
         tab_cmd += ") "
         sql_cmd.append(tab_cmd)
-        if (
-            unique_cols := tuple(sql_scheme[tab]["UNIQUE"])
+        if unique_cols := (
+            tuple(sql_scheme[tab]["UNIQUE"])
             if "UNIQUE" in sql_scheme[tab].keys()
             else ""
         ):
@@ -619,7 +635,7 @@ def __geo_tab__() -> pd.DataFrame:
     sql_scheme = read_json(SQL_file)
     countries = [
         (c["iso2Code"], c["name"], c["region"]["iso2code"], c["region"]["value"])
-        for c in wb.search_countries(".*")
+        for c in wb.get_countries(query=".*")
         if c["region"]["value"] != "Aggregates"
     ]
     geo = pd.DataFrame(

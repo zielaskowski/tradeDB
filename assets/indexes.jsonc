@@ -1,4 +1,4 @@
-//**LATIN AMERICA & CARIBBEAN"
+//********LATIN AMERICA & CARIBBEAN"
 //**SOUTH ASIA
 //**SUB-SAHARAN AFRICA
 //**EUROPE & CENTRAL ASIA
@@ -8,7 +8,7 @@
 //**[id for API, table group or appendix in name (if group is missing)]
 //**            (minus is all without appendix, list of apendixes split with ';')]
 {
-  "EAST ASIA & PACIFIC": {
+  "ASIA": {
     "api": {
       "id": 524,
       "group": ""
@@ -17,7 +17,7 @@
       "region": "EAST ASIA & PACIFIC"
     }
   },
-  "EUROPE & CENTRAL ASIA": {
+  "EUROPE": {
     "api": {
       "id": 525,
       "group": ""
@@ -26,78 +26,19 @@
       "region": "EUROPE & CENTRAL ASIA"
     }
   },
-  "U.S.": {
+  "NORTH AMERICA": {
     "api": {
       "id": 526,
-      "group": "U.S."
+      "group": "U.S.; MEXICO; CANADA"
     },
     "description": {
-      "region": "NORTH AMERICA"
-    }
-  },
-  "CANADA": {
-    "api": {
-      "id": 526,
-      "group": "CANADA"
-    },
-    "description": {
-      "region": "NORTH AMERICA"
-    }
-  },
-  "U.S. Main": {
-    "api": {
-      "id": 549,
-      "group": "Main"
-    },
-    "description": {
-      "country": "US",
-      "region": "NORTH AMERICA"
-    }
-  },
-  "U.S. Sector": {
-    "api": {
-      "id": 549,
-      "group": "Sector"
-    },
-    "description": {
-      "country": "US",
-      "region": "NORTH AMERICA"
-    }
-  },
-  "U.S. Volatility": {
-    "api": {
-      "id": 549,
-      "group": "Volatility"
-    },
-    "description": {
-      "country": "US",
-      "region": "NORTH AMERICA"
-    }
-  },
-  "U.S. Comodity": {
-    "api": {
-      "id": 549,
-      "group": "Commodity"
-    },
-    "description": {
-      "country": "US",
-      "region": "NORTH AMERICA"
-    }
-  },
-  "U.S. Other": {
-    "api": {
-      "id": 549,
-      "group": "Other"
-    },
-    "description": {
-      "country": "US",
       "region": "NORTH AMERICA"
     }
   },
   "LATIN AMERICA & CARIBBEAN": {
     "api": {
       "id": 526,
-      "group": "-U.S.;-CANADA"
+      "group": "-U.S.; -CANADA; -MEXICO"
     },
     "description": {
       "region": "LATIN AMERICA & CARIBBEAN"
@@ -110,6 +51,15 @@
     },
     "description": {
       "region": "MIDDLE EAST & NORTH AFRICA"
+    }
+  },
+  "AFRICA": {
+    "api": {
+      "id": 510,
+      "group": "Africa"
+    },
+    "description": {
+      "region": "SUB-SAHARAN AFRICA"
     }
   }
 }

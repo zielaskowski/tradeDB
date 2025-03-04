@@ -12,5 +12,10 @@
     "UK_ETFs_asia": [587, "Asia"],
     "UK_ETFs_europe": [587, "Europe"],
     "UK_ETFs_america": [587, "America"],
-    "UK_ETFs_middle-east": [587, "Middle East"]
+    "UK_ETFs_middle-east": [587, "Middle East"],
+    "S&P main indices":[549, "Main"],
+    "S&P sector indices":[549, "Sector"],
+    "S&P volatility indices":[549, "Volatility"],
+    "S&P commodity indices":[549, "Commodity"],
+    "S&P other indices":[549, "Other"]
 }

@@ -124,8 +124,6 @@ class Trader:
         return self
 
     def __str__(self) -> str:
-        if self.data.empty:
-            return ""
         if not self.is_pivot:
             dat = self.data.reindex(columns=self.columns)
             dat = dat.drop_duplicates()
@@ -149,9 +147,7 @@ class Trader:
             dat = api.stooq(
                 sector_id=region["api"]["id"],  # type: ignore
                 sector_grp=region["api"]["group"],  # type: ignore
-                from_date=self.start_date,
-                to_date=self.end_date,
-            )
+            )  # without from_date and to_date will take last session
             dat = self.__describe_table__(
                 dat=dat,
                 tab="INDEXES",
@@ -160,16 +156,17 @@ class Trader:
             resp = sql.put(dat=dat, tab="INDEXES", db_file=self.db)
             if not resp:
                 sys.exit(f"FATAL: wrong data for {region}")
-
+            # get components for index
             with alive_bar(len(dat.index)) as bar:
                 for row in dat.itertuples(index=False):
                     datComp = api.stooq(
-                        component=row.symbol,
+                        component=str(row.symbol),
                         from_date=self.start_date,
                         to_date=self.end_date,
                     )
                     if datComp.empty:
                         # no components for index
+                        bar()
                         continue
                     datComp = self.__describe_table__(
                         dat=datComp,
@@ -177,7 +174,7 @@ class Trader:
                         description={"indexes": row.symbol, "country": row.country},
                     )
                     resp = sql.put(
-                        dat=datComp, tab="STOCK", db_file=self.db, index=row.symbol
+                        dat=datComp, tab="STOCK", db_file=self.db, index=str(row.symbol)
                     )
                     if not resp:
                         sys.exit(f"FATAL: wrong data for {row.symbol}")
@@ -508,11 +505,24 @@ class Trader:
             self.update_symbols = False
 
         # dates
-        # if not selected particular names, display last date only
-        # and do not update
+        # class initialize with 'start' and 'end' date == today
+        ##################
         self.date_format = kwargs.get("date_format", self.date_format)
+
+        if not self.update_dates and all(
+            a not in kwargs.keys() for a in ["start_date", "end_date"]
+        ):
+            # take last available in SQL if not updating dates
+            self.start_date = sql.get_end_date(
+                db_file=self.db, tab=self.tab + "_DESC", ticker=self.symbol
+            )
+            self.end_date = sql.get_end_date(
+                db_file=self.db, tab=self.tab + "_DESC", ticker=self.symbol
+            )
+
+        self.__set_dates__(kwargs)
+
         if self.update_dates:
-            self.__set_dates__(kwargs)
             self.__update_dates__()
 
         if self.update_symbols:
@@ -529,15 +539,16 @@ class Trader:
             db_file=self.db,
             tab=self.tab,
             symbol=self.symbol,
-            # query will return last available data if date==None
-            from_date=self.start_date if self.update_dates else None,
-            to_date=self.end_date if self.update_dates else None,
+            from_date=self.start_date,
+            to_date=self.end_date,
         )
 
         self.__update_currency__()
-        self.convert_currency()
+        self.__convert_currency__()
         if self.candle_pattern_kwargs:
             self.candle_pattern(**self.candle_pattern_kwargs)
+        if not self.update_dates and self.data.empty:
+            print("No data found in local DB. Consider setting update_dates=True")
         return self
 
     def to_str(self, col_name: str) -> Union[None, str]:
@@ -624,7 +635,7 @@ class Trader:
         assume input data is daily
         can translate to weekly and monthly
         """
-        periods = {"daily": "D", "weekly": "W", "monthly": "M"}
+        periods = {"daily": "D", "weekly": "W", "monthly": "ME"}
         if date_period.lower() in periods.keys():
             date_period = periods[date_period.lower()]
 
@@ -642,7 +653,7 @@ class Trader:
         return df
 
     def candle_pattern(self, date_period="daily") -> pd.DataFrame:
-        """recognize cnadle pattern and add column with prediction:
+        """recognize canadle pattern and add column with prediction:
         - bullish are positive number (the higher value the more bullish)
         - bearisch is negative (the lower value the more bearish)
         dates must be arranged ascending (from older to newer)
@@ -756,9 +767,9 @@ class Trader:
                     low=grp["low"],
                     high=grp["high"],
                     close=grp["val"],
-                    **cv['kwargs']
+                    **cv["kwargs"],
                 )
-                grp.loc[cp_rows, "candle_pattern"] += cv['ind']  # type: ignore
+                grp.loc[cp_rows, "candle_pattern"] += cv["ind"]  # type: ignore
             grp["candle_pattern"] = grp["candle_pattern"].cumsum()
             grp["symbol"] = symbol
             return grp
@@ -822,7 +833,7 @@ class Trader:
                 dat = process_column(dat, col_name, suffix)
         return dat.reset_index(drop=True)
 
-    def convert_currency(self) -> None:
+    def __convert_currency__(self) -> None:
         if self.currency == "%" or self.data.empty:
             return
 
@@ -867,40 +878,50 @@ class Trader:
         self.data = self.data.reindex(columns=cols)
         return
 
-    def __set_dates__(self, dates: Dict) -> None:
+    def __set_dates__(self, kwargs: Dict) -> None:
         """set start and end date for collecting data
         if 'today' in dict keys, will set to today (considering working days)
         other way search 'start_date' and/or 'end_date' in dict and set accordingly
         if no dates in dict, set 'self.update_dates' to None so will give last available
         """
-        if "start_date" in dates.keys():
-            self.start_date = biz_date(dates["start_date"], format=self.date_format)
+        if "start_date" in kwargs.keys():
+            self.start_date = biz_date(kwargs["start_date"], format=self.date_format)
             self.date_change_print = False
-        if "end_date" in dates.keys():
-            self.end_date = biz_date(dates["end_date"], format=self.date_format)
+        if "end_date" in kwargs.keys():
+            self.end_date = biz_date(kwargs["end_date"], format=self.date_format)
             self.date_change_print = False
-        bz_today = biz_date(date.today())
-        if "today" in dates.keys():
+        if "today" in kwargs.keys():
+            bz_today = biz_date(date.today())
             self.start_date = bz_today
             self.end_date = bz_today
-        if self.start_date == bz_today and self.end_date == bz_today:
-            self.__date_change_info__()
 
+        self.__date_change_info__(kwargs)
         self.end_date = max(self.end_date, self.start_date)
         return
 
-    def __date_change_info__(self) -> None:
+    def __date_change_info__(self, kwargs: Dict) -> None:
         if self.tab == "GEO" or not self.date_change_print:
             return
+        self.date_change_print = False
         if self.update_symbols:
             print("Date range changed to last working day when updating symbols.")
-        if not self.update_dates:
+            return
+        if not any(k in ["name", "symbol"] for k in kwargs.keys()):
             print("Date range changed to last locally available date.")
-            print("Select particular symbol, name if you want different dates.")
-        if self.update_dates:
+            print("Select particular symbol or name if you want different dates.")
+            return
+        if not self.update_dates:
+            print("Date range changed to locally available dates.")
+            print("set update_dates=True if you want different dates.")
+            return
+        if (
+            self.update_dates
+            and self.start_date == biz_date(date.today())
+            and self.end_date == biz_date(date.today())
+        ):
             print("Date range set to last working day.")
             print("Select start_date and/or end_date if you want different dates.")
-        self.date_change_print = False
+            return
 
     def __missing_dates__(
         self, dat: pd.DataFrame, date_source="self_date"
@@ -945,23 +966,25 @@ class Trader:
                         print("...updating dates")
                         info = False
                     dat = api.stooq(
-                        from_date=row.from_date,
-                        to_date=row.to_date,
-                        symbol=row.symbol,
+                        from_date=row.from_date,  # type: ignore
+                        to_date=row.to_date,  # type: ignore
+                        symbol=str(row.symbol),
                     )
                     if dat.empty:
                         print("no data on web")  # DEBUG
                         continue
 
                     if dat.iloc[0, 0] == "asset removed":
-                        sql.rm_all(tab=self.tab, symbol=row.symbol, db_file=self.db)
+                        sql.rm_all(
+                            tab=self.tab, symbol=str(row.symbol), db_file=self.db
+                        )
                         print("symbol removed")  # DEBUG
                         continue
 
                     dat = self.__describe_table__(
                         dat=dat,
                         tab=self.tab,
-                        description=row._asdict(),
+                        description=row._asdict(),  # type: ignore
                     )
                     resp = sql.put(dat=dat, tab=self.tab, db_file=self.db)
                     if not resp:
@@ -996,12 +1019,12 @@ class Trader:
                         print("...updating currency")
                         info = False
                     cur_val = api.ecb(
-                        from_date=row.from_date, end_date=row.to_date, symbol=row.symbol
+                        from_date=row.from_date, end_date=row.to_date, symbol=row.symbol  # type: ignore
                     )
                     cur_val = self.__describe_table__(
                         dat=cur_val,
                         tab="CURRENCY",
-                        description=row._asdict(),
+                        description=row._asdict(),  # type: ignore
                     )
                     resp = sql.put(dat=cur_val, tab="CURRENCY", db_file=self.db)
                     if not resp:
@@ -1017,7 +1040,7 @@ class Trader:
         # for some dates the asset value can be missing
         # i.e. when stock is closed due to holidays
         # fill with zero to keep STOCK or INDEX in sql
-        dat["val"].fillna(0, inplace=True)
+        dat["val"] = dat["val"].fillna(0)
         # extract countries
         ######
         # for indexes, country may be within name
@@ -1036,10 +1059,9 @@ class Trader:
 
         # get dates
         ######
-        def minmax(func: Callable, dat: pd.DataFrame) -> List:
-            minmax_date = []
+        def minmax(func: Callable, dat: pd.DataFrame) -> None:
             col = "from_date" if func.__name__ == "min" else "to_date"
-            for h in dat["hash"]:
+            for h in dat["hash"].unique():
                 date_sql = sql.getDF(
                     tab=f"{tab}_DESC",
                     get=[col],
@@ -1048,24 +1070,18 @@ class Trader:
                     db_file=self.db,
                 )
                 if date_sql.empty:
-                    minmax_date += [func(dat.loc[dat["hash"] == h, "date"])]
+                    minmax_date = func(dat.loc[dat["hash"] == h, "date"])
                 else:
-                    minmax_date += [
-                        func(
-                            dat.loc[dat["hash"] == h, "date"].to_list()  # type: ignore
-                            + [date_sql.iloc[0, 0]]
-                        )
-                    ]
-            return minmax_date
+                    minmax_date = func(
+                        dat.loc[dat["hash"] == h, "date"].to_list()  # type: ignore
+                        + [date_sql.iloc[0, 0]]
+                    )
+                dat.loc[dat["hash"] == h, col] = minmax_date
+            return
 
-        dat["from_date"] = minmax(min, dat)
-        dat["to_date"] = minmax(max, dat)
-        # if start_date is smaller then ticker trade start, set 1900-1-1
-        # this will prevent scraping of non existing data
-        trade_start = [
-            d - timedelta(days=30) > self.start_date for d in dat["from_date"]
-        ]
-        dat.loc[trade_start, "from_date"] = date(year=1900, month=1, day=1)
+        minmax(min, dat)
+        minmax(max, dat)
+
         # get industry
         ######
         # ....

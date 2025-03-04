@@ -11,7 +11,6 @@ import tkinter as tk
 from PIL import Image, ImageTk
 import io
 
-import numpy as np
 import pandas as pd
 import pandasdmx as sdmx
 import requests as rq
@@ -32,8 +31,8 @@ header = set_header(STOOQ_HEADER)
 
 
 def stooq(
-    from_date: Union[date, None],
-    to_date: Union[date, None],
+    from_date: Union[date, None] = None,
+    to_date: Union[date, None] = None,
     sector_id=0,
     sector_grp="",
     symbol="",
@@ -51,11 +50,12 @@ def stooq(
     """
     data = pd.DataFrame([""])
     # convert dates
-    to_dateS = dt.strftime(to_date, "%Y%m%d")  # type: ignore
-    from_dateS = dt.strftime(from_date, "%Y%m%d")  # type: ignore
-
+    if to_date:
+        to_dateS = dt.strftime(to_date, "%Y%m%d")  # type: ignore
+    if from_date:
+        from_dateS = dt.strftime(from_date, "%Y%m%d")  # type: ignore
     if sector_id:  # indexes
-        url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1&d={from_dateS}"
+        url = f"https://stooq.com/t/?i={sector_id}&v=0&l=%page%&f=0&n=1&u=1"
         # n: long/short names
         # f: show/hide favourite column
         # l: page number for very long tables (table has max 100 rows)
@@ -128,6 +128,7 @@ def __captcha__(page: bs) -> bool:
     # check if we have captcha
     # captcha is trigered with bandwith limit or hit limit
     global header
+    
     if all(
         page.find(string=txt) is None
         for txt in ["The data has been hidden", "Dane zostały ukryte"]
@@ -146,7 +147,7 @@ def __captcha__(page: bs) -> bool:
         with Image.open(io.BytesIO(resp.content)) as img:
             img.save("./dev/captcha.png")  # DEBUG
 
-        captcha_txt = captcha_gui()
+        captcha_txt = __captcha_gui__()
         if not captcha_txt:
             sys.exit(f"\nFATAL: user interuption")
 
@@ -165,7 +166,7 @@ def __captcha__(page: bs) -> bool:
 async def __GDPR__(url: str):
     global header
     # GDPR stands for: GeneralDataProtectionRegulation
-    # simulate browser behaviour: clisk consent button
+    # simulate browser behaviour: click consent button
     # to collect all headers, but more important cookies
     print("Setting https connection...\n")
 
@@ -177,7 +178,7 @@ async def __GDPR__(url: str):
             await context.new_page()
     except:
         print("Installing Playwright....")
-        os.system("playwright install")
+        os.system("playwright install chromium --only-shell")
 
     async def request(req):
         # we take whole header for request
@@ -221,6 +222,7 @@ async def __GDPR__(url: str):
 
 def __scrap_stooq__(url: str, n=100) -> pd.DataFrame:
     global header
+    blank_header=False
     data = pd.DataFrame()
     for i in range(1, n):
         urli = re.sub("%page%", str(i), url).lower()
@@ -234,10 +236,16 @@ def __scrap_stooq__(url: str, n=100) -> pd.DataFrame:
                     data = pd.DataFrame(["asset removed"])
                 return data
             # set cooki
+            # for the first time just write basc header and try again
+            if header=={}:
+                blank_header=True
             header = set_header(
                 file=STOOQ_HEADER,
                 upd_header={"cookie": resp.headers.get("set-cookie", "")},
             )
+            if blank_header:
+                blank_header=False
+                continue
 
             page = bs(resp.content, "lxml")
 
@@ -310,7 +318,7 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
     grpName = data.loc[grpNameRows, "name"].to_frame()
     if grpName.empty:
         # we dont have groups so we have suffixes
-        grps = grp.split(";")
+        grps = [g.strip() for g in grp.split(";")]
         for i, g in enumerate(grps):
             if g[0] == "-":
                 # i.e. '^(?!.*CANADA$).*$'
@@ -320,7 +328,7 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
         grp_rows = [
             data["name"].apply(lambda x: re.search(g, x) is not None) for g in grps
         ]
-        grp_rows = np.logical_and.reduce(grp_rows)
+        grp_rows = pd.DataFrame(grp_rows).any(axis="rows") # type: ignore
         data = data.loc[grp_rows, :]
     else:
         start = list(map(lambda x: x + 1, grpName.index.to_list()))
@@ -337,7 +345,7 @@ def __split_groups__(data: pd.DataFrame, grp: str) -> pd.DataFrame:
     return data
 
 
-def captcha_gui() -> str:
+def __captcha_gui__() -> str:
     """
     Displays a GUI with a captcha pic
     and a text box to enter the answer

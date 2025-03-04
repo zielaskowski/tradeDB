@@ -21,15 +21,17 @@ def read_json(file: str) -> Dict:
     try:
         with open(file, "r") as f:
             json_f = re.sub(
-                "//\\*\\*.*$", "", "".join(f.readlines()), flags=re.MULTILINE
+                r"//\*\*.*$", "", "".join(f.readlines()), flags=re.MULTILINE
             )
     except IOError:
         raise Exception(f"FATAL: '{file}' is missing")
 
+    if json_f == "":
+        return {}
     try:
         return json.loads(json_f)
     except JSONDecodeError:
-        return {}
+        raise Exception(f"FATAL: '{file}' json parse error.")
 
 
 def set_header(file: str, upd_header={}) -> dict:

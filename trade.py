@@ -1,6 +1,22 @@
-#!/home/mi/.backup/venv/ML/bin/python
-# just starting file, for testing basically
+#!/home/mi/docs/prog/python/tradeDB/.venv/bin/python
+# example file, for testing basically
 from tradeDB import Trader
+
+
+# pkn = Trader()
+# pkn.get(tab="stock", symbol="ale", columns="-indexes;-industry;-info", start_date="1-1-2020",update_dates=False)
+# pkn.plot()
+
+# # will take last available from db (not today)
+# ale = Trader()
+# ale.get(tab="stock", name="CITIC", columns="-indexes;-industry;-info", update_dates=False)
+# print(ale)
+
+# # nothing available locally
+# ale = Trader()
+# ale.get(tab="stock", name="CITIC", columns="-indexes;-industry;-info", start_date = "1-1-1910",end_date = "1-1-1920",update_dates=False)
+# print(ale)
+
 
 
 pkn=Trader()
@@ -8,7 +24,7 @@ ale=Trader()
 pkn.get(tab='stock',symbol='pkn', start_date='1-1-2020')
 ale.get(tab='stock',symbol='ale')
 pkn+=ale
-pkn.candle_pattern('M')
+pkn.candle_pattern('monthly')
 pkn.pivot()
 pkn.plot()
 
@@ -118,6 +134,9 @@ print(trader.get(tab="STOCK", name="pkn"))
 print(trader.get(tab='STOCK', region='east asia', currency='pln'))
 
 
+
+# prophet liblary
+# stocksight library for twitter sentiment
 
 # add TA-lib
 # ta: indicator name as str + other kwargs
