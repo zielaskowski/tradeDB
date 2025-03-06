@@ -298,6 +298,8 @@ def __write_table__(
     return __execute_sql__(cmd, db_file)
 
 def get_start_date(ticker: List, tab: str, db_file: str) -> date:
+    if ticker == []:
+        return date.today()
     resp = getL(db_file=db_file, 
                tab=tab, 
                get=["from_date"],
@@ -306,6 +308,8 @@ def get_start_date(ticker: List, tab: str, db_file: str) -> date:
     return min(resp)
 
 def get_end_date(ticker: List, tab: str, db_file: str) -> date:
+    if ticker == []:
+        return date.today()
     resp = getL(db_file=db_file, 
                tab=tab, 
                get=["to_date"],
@@ -413,23 +417,11 @@ def __split_cmd__(script: list) -> List[List]:
         res = [r.strip() for r in res]
         # remove first and last parenthesis in string if exists
         res = [r[1:] if r[0] == "(" else r for r in res]
-        res = [r[:-2] if r[-1] == ")" else r for r in res]
+        res = [r[:-1] if r[-1] == ")" else r for r in res]
         return [f" ( {r} ) " for r in res]
 
     resp = [split_logic_chain(cmd) for cmd in script]
     return [r for r in resp if r]
-
-
-def __split_list__(lst: str, nel: int) -> list:
-    """
-    Split list into parts with nel elements each (except last)
-    """
-    lst_split = re.split(" OR ", lst)
-    n = (len(lst_split) // nel) + 1
-    cmd_split = [" OR ".join(lst_split[i * nel : (i + 1) * nel]) for i in range(n)]
-    # make sure each part starts and ends with parenthesis
-    cmd_split = ["(" + re.sub(r"[\(\)]", "", s) + ") " for s in cmd_split]
-    return cmd_split
 
 
 def rm_all(tab: str, symbol: str, db_file: str) -> Union[None, Dict[str, pd.DataFrame]]:

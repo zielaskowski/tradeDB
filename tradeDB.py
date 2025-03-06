@@ -124,6 +124,8 @@ class Trader:
         return self
 
     def __str__(self) -> str:
+        if self.data.empty:
+            return ""
         if not self.is_pivot:
             dat = self.data.reindex(columns=self.columns)
             dat = dat.drop_duplicates()
@@ -457,6 +459,10 @@ class Trader:
             print(f"Overlaping arguments '{args}'.")
             print("The most broad will be used. See help")
 
+        # possibly symbol =[] , i.e. when previously requested for region where no data
+        if self.symbol == []:
+            self.symbol = ["%"]
+
         # sql file location
         self.db = kwargs.get("db_file", self.db)
 
@@ -500,40 +506,37 @@ class Trader:
             self.update_dates = False
 
         # GEO tab must be treated specially: update dosen't make sens
-        if "GEO" in self.tab:
-            self.update_dates = False
-            self.update_symbols = False
+        if "GEO" not in self.tab:
+            # dates
+            # class initialize with 'start' and 'end' date == today
+            ##################
+            self.date_format = kwargs.get("date_format", self.date_format)
 
-        # dates
-        # class initialize with 'start' and 'end' date == today
-        ##################
-        self.date_format = kwargs.get("date_format", self.date_format)
+            if not self.update_dates and all(
+                a not in kwargs.keys() for a in ["start_date", "end_date"]
+            ):
+                # take last available in SQL if not updating dates
+                self.start_date = sql.get_end_date(
+                    db_file=self.db, tab=self.tab + "_DESC", ticker=self.symbol
+                )
+                self.end_date = sql.get_end_date(
+                    db_file=self.db, tab=self.tab + "_DESC", ticker=self.symbol
+                )
 
-        if not self.update_dates and all(
-            a not in kwargs.keys() for a in ["start_date", "end_date"]
-        ):
-            # take last available in SQL if not updating dates
-            self.start_date = sql.get_end_date(
-                db_file=self.db, tab=self.tab + "_DESC", ticker=self.symbol
-            )
-            self.end_date = sql.get_end_date(
-                db_file=self.db, tab=self.tab + "_DESC", ticker=self.symbol
-            )
+            self.__set_dates__(kwargs)
 
-        self.__set_dates__(kwargs)
+            if self.update_dates:
+                self.__update_dates__()
 
-        if self.update_dates:
-            self.__update_dates__()
-
-        if self.update_symbols:
-            # set dates to today to limit trafic to avoid blocking
-            self.__set_dates__({"today": True})
-            self.__update_sql__()
-            # new symbols may arrive so update
-            self.symbol = sql.get_from_geo(
-                db_file=self.db, tab=self.tab, search=self.region, what=["region"]
-            )
-            self.update_dates = False
+            if self.update_symbols:
+                # set dates to today to limit trafic to avoid blocking
+                self.__set_dates__({"today": True})
+                self.__update_sql__()
+                # new symbols may arrive so update
+                self.symbol = sql.get_from_geo(
+                    db_file=self.db, tab=self.tab, search=self.region, what=["region"]
+                )
+                self.update_dates = False
 
         self.data = sql.query(
             db_file=self.db,
