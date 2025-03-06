@@ -11,6 +11,7 @@ from sklearn import preprocessing as prep
 # import matplotlib
 # matplotlib.use("Agg")  # necessery for debuging plot in VS code (not-interactive mode)
 from matplotlib import pyplot as plt
+import matplotlib.dates as mdate
 from alive_progress import alive_bar
 from technical_analysis import candles
 
@@ -575,10 +576,15 @@ class Trader:
         dat = self.data.reindex(columns=self.columns).drop_duplicates()
         return dat.to_dict(**kwargs)
 
-    def plot(self, normalize=True) -> None:
+    def plot(self, normalize=True, xticks = 20) -> None:
         if self.data.empty:
             return
         dat = self.pivot()
+        
+        dates=dat.reset_index("date").loc[:,"date"]
+        n_months = (dates.iloc[-1] - dates.iloc[0]).days / 30
+        n_months = int(n_months / xticks)
+        
         axes = [0, 1, 2]
         fig, axs = plt.subplots(len(axes), 1, sharex=True)
         fig.subplots_adjust(hspace=0.5)
@@ -589,7 +595,9 @@ class Trader:
             dat.drop(columns=cols, inplace=True)
             dat_cols_np = dat_cols.to_numpy()
             for i in range(len(dat_cols_np[0])):
-                axs[ax_n].plot(dat_cols_np[:, i], label=dat_cols.columns[i])
+                axs[ax_n].plot(dates, dat_cols_np[:, i], label=dat_cols.columns[i])
+                axs[ax_n].xaxis.set_major_formatter(mdate.DateFormatter('%Y-%m'))
+                axs[ax_n].xaxis.set_major_locator(mdate.MonthLocator(interval=n_months))
 
         # candle pattern plot
         cp_cols = [col for col in dat.columns if "_cp" in col]
@@ -616,7 +624,7 @@ class Trader:
             dat_np = prep.StandardScaler().fit_transform(dat_np)
         axs[0].set_title("ticker value")
         for i in range(len(dat_np[0])):
-            axs[0].plot(dat_np[:, i], label=dat.columns[i])
+            axs[0].plot(dates,dat_np[:, i], label=dat.columns[i])
         # in matplotlib, fill figure with remained axes after delete of one of axes
 
         for a in axes:
@@ -624,13 +632,14 @@ class Trader:
             i = axes.index(a)
             axs[a].set_position(
                 [
-                    axs[a].get_position().x0,
-                    (lax - i - 1) * (1 / lax) + (0.1 / lax),
-                    axs[a].get_position().width,
-                    0.6 / lax,
+                    axs[a].get_position().x0,                   # x0
+                    (lax - i - 1) * (1 / lax) + (0.3 / lax),    # y0
+                    axs[a].get_position().width,                # width
+                    0.5 / lax,                                  # height
                 ]
             )
         fig.legend()
+        plt.xticks(rotation=55)
         plt.show()
 
     def __date_resample__(self, df: pd.DataFrame, date_period: str) -> pd.DataFrame:

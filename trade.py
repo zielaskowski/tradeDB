@@ -3,6 +3,15 @@
 from tradeDB import Trader
 
 
+tr = Trader()
+tr.get(tab="stock", name="MTR CORPORATION", start_date="1-1-2020")
+print(tr)
+tr.plot()
+tr.plot(xticks=10)
+tr.candle_pattern("monthly")
+tr.plot()
+
+
 pkn = Trader()
 pkn.get(tab="stock", symbol="ale", columns="-indexes;-industry;-info", start_date="1-1-2020",update_dates=False)
 pkn.plot()
