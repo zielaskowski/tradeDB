@@ -73,7 +73,9 @@ class Trader:
         self.__set_dates__({"today": True})
         self.data = pd.DataFrame()
         self.kwargs = {}  # store last arguments
-        self.candle_pattern_kwargs = {}  # store cp arguments
+        self.candle_pattern_kwargs = {}  # store candle_pattern arguments
+        self.candle_pattern_file = "./assets/candle_pattern.jsonc"
+        self.cp_cols = {"CP":"candle_pattern", "CF":"formation"}
         # read table sectors
         self.SECTORS = self.__read_sectors__(
             {
@@ -380,6 +382,8 @@ class Trader:
         if self.tab == "STOCK":
             opts += ["indexes"]
         opts = [c for c in opts if c not in ["hash"]]
+        # add candle pattern columns
+        opts += list(self.cp_cols.values())     
         argL = arg.split(";")
         if "%" in argL:
             argL.remove("%")
@@ -664,114 +668,46 @@ class Trader:
 
         return df
 
-    def candle_pattern(self, date_period="daily") -> pd.DataFrame:
+    def candle_pattern(self, date_period="daily", file = "", **kwargs) -> Self:
         """recognize canadle pattern and add column with prediction:
         - bullish are positive number (the higher value the more bullish)
         - bearisch is negative (the lower value the more bearish)
-        dates must be arranged ascending (from older to newer)
+        args:
+        - date_period: daily, weekly, monthly
+        - file: json file with candle patterns
+        - columns: columns to display
         using technical-analysis library
         https://github.com/trevormcguire/technical-analysis
         """
         if self.data.empty:
-            return self.data
+            return self
+        
         req_cols = ["open", "high", "low", "val", "vol", "symbol", "date"]
+        cp_cols = ["symbol", "date"] + list(self.cp_cols.values())
+        
         if not all([c in self.data.columns for c in req_cols]):
             print("candle pattern requires open, high, low, close, volume")
-            return self.data
-        if "candle_pattern" in self.data.columns:
-            self.data.drop(columns=["candle_pattern"], inplace=True)
-        self.candle_pattern_kwargs = {"date_period": date_period}
+            return self
+        
+        if self.cp_cols['CP'] in self.data.columns:
+            self.data.drop(columns=[self.cp_cols['CP']], inplace=True)
+        if self.cp_cols['CF'] in self.data.columns:
+            self.data.drop(columns=[self.cp_cols['CF']], inplace=True)
+        
+        self.candle_pattern_kwargs["date_period"] =  date_period
+        if file != "":
+            self.candle_pattern_file = file
+        # columns
+        self.__arg_columns__(arg=kwargs.get("columns", ";".join(self.columns)))
+        
         self.data["date"] = pd.to_datetime(self.data["date"])
-        candle_pattern = {
-            "bearish_engulfing": {
-                "ind": -1,
-                "kwargs": {"trend_lookback": 30, "trend_threshold": 0.03},
-            },
-            "dark_cloud": {
-                "ind": -1,
-                "kwargs": {
-                    "trend_lookback": 30,
-                    "trend_threshold": 0.03,
-                    "min_body_size": 0.7,
-                    "new_high_periods": 30,
-                },
-            },
-            "bearish_star": {
-                "ind": -1,
-                "kwargs": {
-                    "lookback": 30,
-                    "min_body_size": 0.7,
-                    "relative_threshold": 0.3,
-                    "min_gap_size": 0.001,
-                },
-            },
-            "bearish_island": {
-                "ind": -1,
-                "kwargs": {"min_gap_size": 0.001, "lookback": 30},
-            },
-            "bearish_tasuki_gap": {
-                "ind": -1,
-                "kwargs": {
-                    "trend_lookback": 30,
-                    "trend_threshold": -0.03,
-                    "min_body_size": 0.75,
-                    "min_gap_size": 0.002,
-                },
-            },
-            "bullish_engulfing": {
-                "ind": +1,
-                "kwargs": {"trend_lookback": 30, "trend_threshold": 0.03},
-            },
-            "bullish_island": {
-                "ind": +1,
-                "kwargs": {"min_gap_size": 0.001, "lookback": 30},
-            },
-            "bullish_star": {
-                "ind": +1,
-                "kwargs": {
-                    "lookback": 30,
-                    "min_body_size": 0.7,
-                    "relative_threshold": 0.3,
-                    "min_gap_size": 0.001,
-                },
-            },
-            "bullish_tasuki_gap": {
-                "ind": 1,
-                "kwargs": {
-                    "trend_lookback": 30,
-                    "trend_threshold": -0.03,
-                    "min_body_size": 0.75,
-                    "min_gap_size": 0.002,
-                },
-            },
-            "n_black_crows": {
-                "ind": -1,
-                "kwargs": {
-                    "n": 5,
-                    "lookback": 20,
-                    "min_body_size": 0.75,
-                    "close_threshold": 0.002,
-                },
-            },
-            "n_white_soldiers": {
-                "ind": +1,
-                "kwargs": {
-                    "n": 5,
-                    "lookback": 20,
-                    "min_body_size": 0.75,
-                    "close_threshold": 0.002,
-                },
-            },
-            "rising_n": {"ind": +1, "kwargs": {"n": 5, "lookback": 20}},
-            "rising_three": {"ind": +1, "kwargs": {"lookback": 20}},
-            "falling_n": {"ind": -1, "kwargs": {"n": 5, "lookback": 20}},
-            "falling_three": {"ind": -1, "kwargs": {"lookback": 20}},
-        }
+        candle_pattern = read_json(file=self.candle_pattern_file)
 
         def calc_cp(grp):
             symbol = grp.iloc[0]["symbol"]
             grp = self.__date_resample__(grp, date_period)
-            grp["candle_pattern"] = 0
+            grp[self.cp_cols['CP']] = 0
+            grp[self.cp_cols['CF']] = ""
             for cp, cv in candle_pattern.items():
                 ta_func = getattr(candles, cp)
                 cp_rows = ta_func(
@@ -781,14 +717,16 @@ class Trader:
                     close=grp["val"],
                     **cv["kwargs"],
                 )
-                grp.loc[cp_rows, "candle_pattern"] += cv["ind"]  # type: ignore
-            grp["candle_pattern"] = grp["candle_pattern"].cumsum()
+                grp.loc[cp_rows, self.cp_cols['CP']] += cv["ind"]  # type: ignore
+                grp.loc[cp_rows, self.cp_cols['CF']] = cp
+            grp[self.cp_cols['CP']] = grp[self.cp_cols['CP']].cumsum()
             grp["symbol"] = symbol
             return grp
 
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         cp_DF = (
-            self.data.reindex(columns=req_cols)
+            self.data
+            .reindex(columns=req_cols)
             .drop_duplicates()
             .groupby("symbol", group_keys=False)
             .apply(calc_cp)
@@ -796,14 +734,23 @@ class Trader:
         # both DFs must be sorted before merge_asof
         self.data.sort_values(by=["date"], inplace=True)
         cp_DF.sort_values(by=["date"], inplace=True)
+        
         self.data = pd.merge_asof(
             left=self.data,
-            right=cp_DF.reindex(columns=["symbol", "date", "candle_pattern"]),
+            right=cp_DF.reindex(columns=cp_cols),
             on="date",
             by="symbol",
         )
         self.data.sort_values(by=["symbol", "date"], inplace=True, ignore_index=True)
-        return self.data
+        # fill missing candle_pattern values with last available value
+        self.data["candle_pattern"] = (
+                        self.data
+                        .groupby("symbol")[self.cp_cols['CP']]
+                        .ffill())
+        # may left NaN at begining  if date_period != 'daily'
+        self.data[self.cp_cols['CP']] = self.data[self.cp_cols['CP']].fillna(0)
+        self.data[self.cp_cols['CF']] = self.data[self.cp_cols['CF']].fillna("")
+        return self
 
     def pivot(self, **kwargs) -> pd.DataFrame:
         """wrapper around pandas.DataFrame.pivot_table function
